@@ -202,6 +202,11 @@ while ($true) {
         }
     }
 
+    if ($tick % 180 -eq 0 -and $tick -gt 0) {
+        wLog 'Reinicio programado (30 minutos).' 'WARN'
+        ReiniciarVolt
+    }
+
     if ($tick % 6 -eq 0) { OrganizarJanela }
     $tick++
     Start-Sleep 10
