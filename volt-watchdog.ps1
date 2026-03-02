@@ -13,7 +13,6 @@ public class WinAPI {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint f);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr i, int x, int y, int w, int ht, uint f);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int n);
-    [DllImport("kernel32.dll")] public static extern bool SetProcessWorkingSetSize(IntPtr h, IntPtr min, IntPtr max);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L,T,R,B; }
 }
@@ -195,21 +194,6 @@ while ($true) {
         $biggest = $webviews | Sort-Object WorkingSet -Descending | Select-Object -First 1
         $mb      = [math]::Round($biggest.WorkingSet / 1MB, 1)
         wLog "WebView2 PID $($biggest.Id)   RAM: $($mb) MB" 'DEBUG'
-
-        if ($tick % 3 -eq 0 -and $mb -gt 150) {
-            wLog 'Limpando RAM do WebView2...' 'DEBUG'
-            $handle = (Get-Process -Id $biggest.Id).Handle
-            [WinAPI]::SetProcessWorkingSetSize($handle, [IntPtr](-1), [IntPtr](-1)) | Out-Null
-            Start-Sleep 2
-            $mbDepois = [math]::Round((Get-Process -Id $biggest.Id -EA SilentlyContinue).WorkingSet / 1MB, 1)
-            wLog "RAM antes: $($mb)MB  depois: $($mbDepois)MB" 'OK'
-            if ($mbDepois -gt 400) {
-                wLog "RAM ainda $($mbDepois)MB apos limpeza. Matando WebView2..." 'ERROR'
-                Stop-Process -Id $biggest.Id -Force
-                Start-Sleep 8
-                SendF5
-            }
-        }
 
         if ($tick % 2 -eq 0) {
             $screen = CheckScreen
