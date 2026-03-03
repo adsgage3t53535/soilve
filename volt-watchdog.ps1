@@ -1,13 +1,13 @@
 # ================================================================
-#  VOLT WATCHDOG - Monitor automatico
+#  ROBLOX ERROR KILLER - Com organizador de janelas e detector Volt
 # ================================================================
 
-$host.UI.RawUI.WindowTitle = 'Volt Watchdog'
+$host.UI.RawUI.WindowTitle = 'Roblox Error Killer'
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
-public class WinAPI {
+public class WinAPIR {
     [DllImport("user32.dll")] public static extern IntPtr FindWindow(string a, string b);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, ref RECT r);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint f);
@@ -19,14 +19,14 @@ public class WinAPI {
 '@ -ErrorAction SilentlyContinue
 
 # ── Configuracoes ───────────────────────────────────────────────
-$VoltExe  = $env:LOCALAPPDATA + '\Volt\tauri-app.exe'
-$AppTitle = 'Volt'
-$LogFile  = $env:TEMP + '\volt-watchdog.log'
-$StopFile = $env:TEMP + '\watchdog.stop'
-$WinW     = 900
-$WinH     = 500
-$CmdW     = 700
-$CmdH     = 500
+$LogFile     = $env:TEMP + '\roblox-error-killer.log'
+$StopFile    = $env:TEMP + '\roblox-killer.stop'
+$AppTitle    = 'Volt'
+$WinW        = 900
+$WinH        = 500
+$CmdW        = 700
+$CmdH        = 500
+$ErrorTitles = @('Error', 'Roblox Error', 'Crash', 'Disconnected', 'An error occurred', 'Notice')
 
 # ── Log colorido ────────────────────────────────────────────────
 function wLog($m, $l = 'INFO') {
@@ -43,27 +43,24 @@ function wLog($m, $l = 'INFO') {
         default { Write-Host $m -ForegroundColor White }
     }
     Add-Content $LogFile $s -Encoding UTF8
-    $lines = Get-Content $LogFile -EA SilentlyContinue
-    if ($lines.Count -gt 500) { $lines | Select-Object -Last 250 | Set-Content $LogFile -Encoding UTF8 }
 }
 
 function Separador { Write-Host ('  ' + ('─' * 60)) -ForegroundColor DarkGray }
 
 # ── Organizar janelas ───────────────────────────────────────────
 function OrganizarJanela {
-    Start-Sleep 2
-    $sw = [WinAPI]::GetSystemMetrics(0)
-    $sh = [WinAPI]::GetSystemMetrics(1)
+    $sw = [WinAPIR]::GetSystemMetrics(0)
+    $sh = [WinAPIR]::GetSystemMetrics(1)
 
-    $hwndVolt = [WinAPI]::FindWindow([NullString]::Value, $AppTitle)
+    $hwndVolt = [WinAPIR]::FindWindow([NullString]::Value, $AppTitle)
     if ($hwndVolt -ne [IntPtr]::Zero) {
         $xV = $sw - $WinW - 10
         $yV = $sh - $WinH - 50
-        [WinAPI]::SetWindowPos($hwndVolt, [IntPtr]::Zero, $xV, $yV, $WinW, $WinH, 0x0040) | Out-Null
+        [WinAPIR]::SetWindowPos($hwndVolt, [IntPtr]::Zero, $xV, $yV, $WinW, $WinH, 0x0040) | Out-Null
         wLog "Volt  -> $xV,$yV  $($WinW)x$($WinH)" 'DEBUG'
-    } else { wLog 'Janela Volt nao encontrada' 'WARN' }
+    }
 
-    $hwndWebRB = [WinAPI]::FindWindow([NullString]::Value, 'WebRB')
+    $hwndWebRB = [WinAPIR]::FindWindow([NullString]::Value, 'WebRB')
     if ($hwndWebRB -eq [IntPtr]::Zero) {
         $pr = Get-Process -Name 'WebRB' -EA SilentlyContinue
         if ($pr) { $hwndWebRB = $pr.MainWindowHandle }
@@ -71,31 +68,31 @@ function OrganizarJanela {
     if ($hwndWebRB -ne [IntPtr]::Zero) {
         $xR = $sw - $WinW - 10
         $yR = $sh - $WinH - 50 - $WinH - 10
-        [WinAPI]::SetWindowPos($hwndWebRB, [IntPtr]::Zero, $xR, $yR, $WinW, $WinH, 0x0040) | Out-Null
+        [WinAPIR]::SetWindowPos($hwndWebRB, [IntPtr]::Zero, $xR, $yR, $WinW, $WinH, 0x0040) | Out-Null
         wLog "WebRB -> $xR,$yR  $($WinW)x$($WinH)" 'DEBUG'
-    } else { wLog 'Janela WebRB nao encontrada' 'WARN' }
+    }
 
-    $hwndCmd = [WinAPI]::GetConsoleWindow()
+    $hwndCmd = [WinAPIR]::GetConsoleWindow()
     if ($hwndCmd -ne [IntPtr]::Zero) {
         $xC = $sw - $WinW - 10 - $CmdW - 10
         $yC = $sh - $CmdH - 50
-        [WinAPI]::SetWindowPos($hwndCmd, [IntPtr]::Zero, $xC, $yC, $CmdW, $CmdH, 0x0040) | Out-Null
+        [WinAPIR]::SetWindowPos($hwndCmd, [IntPtr]::Zero, $xC, $yC, $CmdW, $CmdH, 0x0040) | Out-Null
         wLog "CMD   -> $xC,$yC  $($CmdW)x$($CmdH)" 'DEBUG'
     }
 }
 
-# ── Analise de tela ─────────────────────────────────────────────
-function CheckScreen {
-    $hwnd = [WinAPI]::FindWindow([NullString]::Value, $AppTitle)
+# ── Detector de cor do Volt ─────────────────────────────────────
+function CheckVoltScreen {
+    $hwnd = [WinAPIR]::FindWindow([NullString]::Value, $AppTitle)
     if ($hwnd -eq [IntPtr]::Zero) { return 'none' }
-    $r = New-Object WinAPI+RECT
-    [WinAPI]::GetWindowRect($hwnd, [ref]$r) | Out-Null
+    $r = New-Object WinAPIR+RECT
+    [WinAPIR]::GetWindowRect($hwnd, [ref]$r) | Out-Null
     $w = $r.R - $r.L; $h = $r.B - $r.T
     if ($w -le 0 -or $h -le 0) { return 'none' }
     $bmp = New-Object System.Drawing.Bitmap($w, $h)
     $g   = [System.Drawing.Graphics]::FromImage($bmp)
     $hdc = $g.GetHdc()
-    [WinAPI]::PrintWindow($hwnd, $hdc, 2) | Out-Null
+    [WinAPIR]::PrintWindow($hwnd, $hdc, 2) | Out-Null
     $g.ReleaseHdc($hdc); $g.Dispose()
     $white = 0; $black = 0
     for ($x = 0; $x -lt $w; $x += 5) {
@@ -110,58 +107,34 @@ function CheckScreen {
     if ($sampled -eq 0) { return 'none' }
     $wpct = [math]::Round(($white / $sampled) * 100, 1)
     $bpct = [math]::Round(($black / $sampled) * 100, 1)
-    wLog "Tela  branca: $($wpct)%   preta: $($bpct)%" 'DEBUG'
+    wLog "Volt  branca: $($wpct)%   preta: $($bpct)%" 'DEBUG'
     if ($wpct -gt 40) { return 'white' }
     if ($bpct -gt 98) { return 'black' }
     return 'ok'
 }
 
-# ── Enviar F5 ───────────────────────────────────────────────────
-function SendF5 {
-    $tries  = 0
-    $shell  = New-Object -ComObject WScript.Shell
-    $screen = CheckScreen
-    while ($screen -eq 'white' -and $tries -lt 10) {
-        wLog "Enviando F5... tentativa $($tries+1)/10" 'WARN'
-        $shell.AppActivate($AppTitle) | Out-Null
-        $shell.SendKeys('{F5}')
-        $tries++
-        Start-Sleep 2
-        $screen = CheckScreen
+# ── Fechar erros Roblox ─────────────────────────────────────────
+function CheckAndKillErrors {
+    foreach ($t in $ErrorTitles) {
+        $r = taskkill /F /FI ('WINDOWTITLE eq ' + $t) /IM RobloxPlayerBeta.exe 2>&1
+        if ($r -match 'SUCCESS') {
+            wLog "Erro Roblox fechado: $t" 'OK'
+        }
     }
-    if ($tries -gt 0 -and $tries -lt 10) {
-        wLog 'Volt recuperado com F5!' 'OK'
-    } elseif ($tries -ge 10) {
-        wLog 'Volt NAO recuperou apos 10x F5!' 'ERROR'
-    }
-}
-
-# ── Reiniciar Volt ──────────────────────────────────────────────
-function ReiniciarVolt {
-    Separador
-    wLog 'Encerrando Volt...' 'WARN'
-    Get-Process | Where-Object { $_.MainWindowTitle -eq $AppTitle -or $_.ProcessName -eq 'tauri-app' } | Stop-Process -Force -EA SilentlyContinue
-    Start-Sleep 3
-    wLog 'Reiniciando Volt...' 'WARN'
-    Start-Process $VoltExe
-    Start-Sleep 8
-    OrganizarJanela
-    Separador
 }
 
 # ── Inicializacao ───────────────────────────────────────────────
 Clear-Host
 Write-Host ''
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
-Write-Host '  |          VOLT WATCHDOG  -  Monitor Ativo                 |' -ForegroundColor DarkCyan
+Write-Host '  |       ROBLOX ERROR KILLER  -  Monitor Ativo              |' -ForegroundColor DarkCyan
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
 Write-Host ''
-Write-Host '  Volt : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe -ForegroundColor Cyan
 Write-Host '  Log  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $LogFile -ForegroundColor Cyan
 Write-Host ''
 Separador
 Write-Host ''
-wLog 'Watchdog iniciado' 'OK'
+wLog 'Iniciado' 'OK'
 OrganizarJanela
 
 # ── Loop principal ──────────────────────────────────────────────
@@ -169,45 +142,25 @@ $tick = 0
 while ($true) {
 
     if (Test-Path $StopFile) {
-        Write-Host ''; Separador
+        Separador
         wLog 'Stop-file detectado. Encerrando.' 'WARN'
         Remove-Item $StopFile -Force
         break
     }
 
-    $voltProc = Get-Process -Name 'tauri-app' -EA SilentlyContinue
-    if (-not $voltProc) {
-        wLog 'tauri-app.exe nao encontrado. Iniciando Volt...' 'WARN'
-        Start-Process $VoltExe
-        Start-Sleep 10
-        OrganizarJanela
-        $tick++
-        Start-Sleep 10
-        continue
+    # Checa erros Roblox a cada 1 segundo
+    CheckAndKillErrors
+
+    # Checa tela do Volt a cada 10s
+    if ($tick % 10 -eq 0) {
+        $screen = CheckVoltScreen
+        if ($screen -eq 'white')     { wLog 'Volt com tela branca!' 'WARN'  }
+        elseif ($screen -eq 'black') { wLog 'Volt com tela preta!'  'ERROR' }
     }
 
-    $webviews = Get-Process msedgewebview2 -EA SilentlyContinue
-    if (-not $webviews) {
-        wLog 'WebView2 ausente! Reiniciando Volt...' 'ERROR'
-        ReiniciarVolt
-    } else {
-        $biggest = $webviews | Sort-Object WorkingSet -Descending | Select-Object -First 1
-        $mb      = [math]::Round($biggest.WorkingSet / 1MB, 1)
-        wLog "WebView2 PID $($biggest.Id)   RAM: $($mb) MB" 'DEBUG'
+    # Organiza janelas a cada 60s
+    if ($tick % 60 -eq 0 -and $tick -gt 0) { OrganizarJanela }
 
-        if ($tick % 2 -eq 0) {
-            $screen = CheckScreen
-            if ($screen -eq 'white')     { wLog 'Tela branca detectada. Mandando F5...'     'WARN';  SendF5        }
-            elseif ($screen -eq 'black') { wLog 'Tela preta detectada. Reiniciando Volt...' 'ERROR'; ReiniciarVolt }
-        }
-    }
-
-    if ($tick % 180 -eq 0 -and $tick -gt 0) {
-        wLog 'Reinicio programado (30 minutos).' 'WARN'
-        ReiniciarVolt
-    }
-
-    if ($tick % 6 -eq 0) { OrganizarJanela }
     $tick++
-    Start-Sleep 10
+    Start-Sleep 1
 }
