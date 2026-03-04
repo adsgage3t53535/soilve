@@ -224,7 +224,8 @@ function CheckUpdate {
         } elseif ($hash -ne $script:CurHash) {
             wLog 'Nova versao detectada no GitHub. Reiniciando...' 'WARN'
             Start-Sleep 2
-            Start-Process 'cmd.exe' -ArgumentList "/c powershell -ExecutionPolicy Bypass -Command `"iex (irm '$GithubUrl')`""
+            $restartCmd = 'iex (irm ''' + $GithubUrl + ''')'
+            Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $restartCmd"
             exit
         }
     } catch { }
