@@ -229,10 +229,6 @@ function CheckUpdate {
         }
     } catch { }
 }
-            $script:CurVer = $r.version
-        }
-    } catch { }
-}
 
 # ── Poll do servidor Railway ─────────────────────────────────────
 function PollApi {
