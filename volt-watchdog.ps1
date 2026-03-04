@@ -33,7 +33,7 @@ $WinW        = 900
 $WinH        = 500
 $CmdW        = 700
 $CmdH        = 500
-$ApiUrl      = 'https://vps-production-2bd3.up.railway.app/'
+$ApiUrl      = 'https://vps-production-2bd3.up.railway.app'
 $MachineId   = $env:COMPUTERNAME
 $WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
 $WebRBExe    = 'webrb.exe'
@@ -210,20 +210,25 @@ function CheckAndKillErrors {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
-# ── Auto-update (relanca via GitHub se versao mudar) ─────────────
-$GithubUrl     = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
-$script:CurVer = $null
+# ── Auto-update (compara hash direto no GitHub) ───────────
+$GithubUrl      = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
+$script:CurHash = $null
 
 function CheckUpdate {
     try {
-        $r = Invoke-RestMethod -Uri "$ApiUrl/version" -Method GET -TimeoutSec 5 -EA Stop
-        if ($r.version -and $r.version -ne $script:CurVer) {
-            if ($null -ne $script:CurVer) {
-                wLog 'Nova versao detectada. Reiniciando script...' 'WARN'
-                Start-Sleep 2
-                Start-Process 'cmd.exe' -ArgumentList "/c powershell -ExecutionPolicy Bypass -Command `"iex (irm '$GithubUrl')`""
-                exit
-            }
+        $raw   = (Invoke-WebRequest -Uri $GithubUrl -UseBasicParsing -TimeoutSec 10 -EA Stop).Content
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($raw)
+        $hash  = ([System.BitConverter]::ToString([System.Security.Cryptography.MD5]::Create().ComputeHash($bytes))).Replace('-','')
+        if ($null -eq $script:CurHash) {
+            $script:CurHash = $hash
+        } elseif ($hash -ne $script:CurHash) {
+            wLog 'Nova versao detectada no GitHub. Reiniciando...' 'WARN'
+            Start-Sleep 2
+            Start-Process 'cmd.exe' -ArgumentList "/c powershell -ExecutionPolicy Bypass -Command `"iex (irm '$GithubUrl')`""
+            exit
+        }
+    } catch { }
+}
             $script:CurVer = $r.version
         }
     } catch { }
