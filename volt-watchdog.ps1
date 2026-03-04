@@ -33,7 +33,7 @@ $WinW        = 900
 $WinH        = 500
 $CmdW        = 700
 $CmdH        = 500
-$ApiUrl      = 'https://vps-production-2bd3.up.railway.app'
+$ApiUrl      = 'https://SEU-PROJETO.railway.app'
 $MachineId   = $env:COMPUTERNAME
 $WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
 $WebRBExe    = 'webrb.exe'
@@ -194,6 +194,28 @@ function CheckAndKillErrors {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
+# ── Versao do script (hash do proprio arquivo) ───────────────────
+$script:ScriptPath    = $MyInvocation.MyCommand.Path
+$script:ScriptVersion = (Get-FileHash $script:ScriptPath -Algorithm MD5 -EA SilentlyContinue).Hash
+
+# ── Auto-update ──────────────────────────────────────────────────
+function CheckUpdate {
+    try {
+        $r = Invoke-RestMethod -Uri "$ApiUrl/version" -Method GET -TimeoutSec 5 -EA Stop
+        if ($r.version -and $r.version -ne $script:ScriptVersion) {
+            wLog "Nova versao disponivel ($($r.version)). Atualizando..." 'WARN'
+            $newContent = Invoke-RestMethod -Uri "$ApiUrl/script" -Method GET -TimeoutSec 15 -EA Stop
+            $tmpPath    = $env:TEMP + '\monitor_update.ps1'
+            [System.IO.File]::WriteAllText($tmpPath, $newContent, [System.Text.Encoding]::UTF8)
+            wLog 'Script baixado. Reiniciando em 3s...' 'WARN'
+            Start-Sleep 3
+            Copy-Item $tmpPath $script:ScriptPath -Force
+            Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File \`"$script:ScriptPath\`""
+            exit
+        }
+    } catch { }
+}
+
 # ── Poll do servidor Railway ─────────────────────────────────────
 function PollApi {
     try {
@@ -238,6 +260,7 @@ Write-Host '  Volt : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe
 Write-Host '  Log  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $LogFile   -ForegroundColor Cyan
 Write-Host '  API  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $ApiUrl    -ForegroundColor Cyan
 Write-Host '  ID   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId -ForegroundColor Cyan
+Write-Host '  VER  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $script:ScriptVersion -ForegroundColor DarkGray
 Write-Host ''
 Separador
 Write-Host ''
@@ -256,6 +279,9 @@ while ($true) {
 
     # Sempre: poll API (aceita comandos manuais mesmo pausado)
     PollApi
+
+    # Auto-update: verifica nova versao a cada 60s
+    if ($tick % 60 -eq 0) { CheckUpdate }
 
     # Sempre: fecha erros Roblox instantaneamente
     CheckAndKillErrors
