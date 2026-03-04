@@ -167,6 +167,22 @@ function FecharWebRB {
     Get-Process -Name 'webrb' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 }
 
+# ── Definir autoexec do Volt ─────────────────────────────────────
+function SetAutoexec($content) {
+    $dir = $env:LOCALAPPDATA + '\Volt\autoexec'
+    try {
+        if (Test-Path $dir) {
+            Get-ChildItem $dir -File | Remove-Item -Force -EA SilentlyContinue
+        } else {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        [System.IO.File]::WriteAllText("$dir\Script.txt", $content, [System.Text.Encoding]::UTF8)
+        wLog "Autoexec definido ($($content.Length) chars)" 'OK'
+    } catch {
+        wLog "Erro ao definir autoexec: $_" 'ERROR'
+    }
+}
+
 # ── Fechar erros Roblox (EnumWindows) ───────────────────────────
 function CheckAndKillErrors {
     $robloxPids = (Get-Process -Name 'RobloxPlayerBeta' -EA SilentlyContinue).Id
@@ -194,24 +210,21 @@ function CheckAndKillErrors {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
-# ── Versao do script (hash do proprio arquivo) ───────────────────
-$script:ScriptPath    = $MyInvocation.MyCommand.Path
-$script:ScriptVersion = (Get-FileHash $script:ScriptPath -Algorithm MD5 -EA SilentlyContinue).Hash
+# ── Auto-update (relanca via GitHub se versao mudar) ─────────────
+$GithubUrl     = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
+$script:CurVer = $null
 
-# ── Auto-update ──────────────────────────────────────────────────
 function CheckUpdate {
     try {
         $r = Invoke-RestMethod -Uri "$ApiUrl/version" -Method GET -TimeoutSec 5 -EA Stop
-        if ($r.version -and $r.version -ne $script:ScriptVersion) {
-            wLog "Nova versao disponivel ($($r.version)). Atualizando..." 'WARN'
-            $newContent = Invoke-RestMethod -Uri "$ApiUrl/script" -Method GET -TimeoutSec 15 -EA Stop
-            $tmpPath    = $env:TEMP + '\monitor_update.ps1'
-            [System.IO.File]::WriteAllText($tmpPath, $newContent, [System.Text.Encoding]::UTF8)
-            wLog 'Script baixado. Reiniciando em 3s...' 'WARN'
-            Start-Sleep 3
-            Copy-Item $tmpPath $script:ScriptPath -Force
-            Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File \`"$script:ScriptPath\`""
-            exit
+        if ($r.version -and $r.version -ne $script:CurVer) {
+            if ($null -ne $script:CurVer) {
+                wLog 'Nova versao detectada. Reiniciando script...' 'WARN'
+                Start-Sleep 2
+                Start-Process 'cmd.exe' -ArgumentList "/c powershell -ExecutionPolicy Bypass -Command `"iex (irm '$GithubUrl')`""
+                exit
+            }
+            $script:CurVer = $r.version
         }
     } catch { }
 }
@@ -220,16 +233,27 @@ function CheckUpdate {
 function PollApi {
     try {
         $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -TimeoutSec 5 -EA Stop
-        foreach ($cmd in $r.commands) {
+        foreach ($item in $r.commands) {
+            # suporta tanto string simples quanto objeto {cmd, data}
+            if ($item -is [string]) { $cmd = $item; $data = $null }
+            else                    { $cmd = $item.cmd; $data = $item.data }
+
             switch ($cmd) {
                 'open_webrb'       { AbrirWebRB }
                 'close_webrb'      { FecharWebRB }
                 'open_volt'        { AbrirVolt }
                 'close_volt'       { FecharVolt }
                 'restart_volt'     { wLog 'API: reiniciando Volt...' 'OK'; ReiniciarVolt }
+                'close_all_roblox' { FecharTodosRoblox }
+                'restart_all'      { wLog 'API: reiniciando tudo...' 'OK'; ReiniciarTudo }
                 'organize_windows' { wLog 'API: organizando janelas...' 'OK'; OrganizarJanela }
+                'set_autoexec'     {
+                    if ($data) { SetAutoexec $data }
+                    else { wLog 'set_autoexec: conteudo vazio' 'WARN' }
+                }
                 'restart_pc'       {
                     wLog 'API: reiniciando PC em 5s...' 'WARN'
+                    FecharTudo
                     Start-Sleep 5
                     Restart-Computer -Force
                 }
@@ -260,7 +284,6 @@ Write-Host '  Volt : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe
 Write-Host '  Log  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $LogFile   -ForegroundColor Cyan
 Write-Host '  API  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $ApiUrl    -ForegroundColor Cyan
 Write-Host '  ID   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId -ForegroundColor Cyan
-Write-Host '  VER  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $script:ScriptVersion -ForegroundColor DarkGray
 Write-Host ''
 Separador
 Write-Host ''
