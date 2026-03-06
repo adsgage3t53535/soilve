@@ -251,6 +251,13 @@ function PollApi {
                 'close_all_roblox' { FecharTodosRoblox }
                 'restart_all'      { wLog 'API: reiniciando tudo...' 'OK'; ReiniciarTudo }
                 'organize_windows' { wLog 'API: organizando janelas...' 'OK'; OrganizarJanela }
+                'restart_cmd'      {
+                    wLog 'API: reiniciando CMD...' 'WARN'
+                    Start-Sleep 1
+                    $restartCmd = 'iex (irm ''' + $GithubUrl + ''')'
+                    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $restartCmd"
+                    exit
+                }
                 'set_autoexec'     {
                     if ($data) { SetAutoexec $data }
                     else { wLog 'set_autoexec: conteudo vazio' 'WARN' }
