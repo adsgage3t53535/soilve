@@ -170,18 +170,18 @@ function FecharWebRB {
 }
 
 # ── Definir autoexec do Volt ─────────────────────────────────────
-function SetAutoexec($content) {
+function SetAutoexec($url) {
     $dir = $env:LOCALAPPDATA + '\Volt\autoexec'
     try {
-        if (Test-Path $dir) {
-            Get-ChildItem $dir -File | Remove-Item -Force -EA SilentlyContinue
-        } else {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        }
-        [System.IO.File]::WriteAllText("$dir\Script.txt", $content, [System.Text.Encoding]::UTF8)
-        wLog "Autoexec definido ($($content.Length) chars)" 'OK'
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        Get-ChildItem $dir -Filter '*.txt' | Remove-Item -Force -EA SilentlyContinue
+        $fileName = [System.IO.Path]::GetFileName(([uri]$url).LocalPath)
+        if (-not $fileName) { $fileName = 'Script.txt' }
+        $dest = "$dir\$fileName"
+        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 15 -EA Stop
+        wLog "Autoexec baixado: $fileName" 'OK'
     } catch {
-        wLog "Erro ao definir autoexec: $_" 'ERROR'
+        wLog "Erro ao baixar autoexec: $_" 'ERROR'
     }
 }
 
