@@ -39,9 +39,12 @@ $WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
 $WebRBExe    = 'webrb.exe'
 $ErrorTitles = @('Error','Roblox Error','Crash','Disconnected','An error occurred','Notice')
 
-$_mac      = (Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1).MacAddress -replace '-',''
-$_suffix   = if ($_mac) { $_mac.Substring($_mac.Length - 4) } else { Get-Random -Maximum 9999 }
-$MachineId = "$env:COMPUTERNAME-$_suffix"
+# MachineId via auth.json (Note field)
+$_authFile = "$WebRBDir\auth.json"
+$MachineId = try {
+    $j = Get-Content $_authFile -Raw -EA Stop | ConvertFrom-Json
+    if ($j.Note) { $j.Note } else { $env:COMPUTERNAME }
+} catch { $env:COMPUTERNAME }
 
 $script:Paused  = $false
 $script:CurHash = $null
@@ -149,6 +152,12 @@ function ReiniciarTudo {
     FecharTodosRoblox
     FecharVolt
     FecharWebRB
+    # Limpa workspace do Volt
+    $wsDir = $env:LOCALAPPDATA + '\Volt\workspace'
+    if (Test-Path $wsDir) {
+        Get-ChildItem $wsDir -Recurse | Remove-Item -Force -Recurse -EA SilentlyContinue
+        wLog 'Workspace limpo.' 'OK'
+    }
     Start-Sleep 3
     wLog 'Abrindo VoltPro...' 'OK'
     Start-Process $VoltExe
