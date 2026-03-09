@@ -46,7 +46,7 @@ $MachineId = try {
     if ($j.Note) { $j.Note } else { $env:COMPUTERNAME }
 } catch { $env:COMPUTERNAME }
 
-$script:Paused  = $false
+$script:Paused  = $true   # inicia pausado — despause pelo painel
 $script:CurHash = $null
 
 # ── Log ─────────────────────────────────────────────────────────
@@ -230,6 +230,17 @@ function CheckUpdate {
     } catch { }
 }
 
+# ── Reportar metricas ao servidor ───────────────────────────────
+function ReportMetrics {
+    try {
+        $roblox = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Count
+        $volt   = if (GetVoltProc) { 1 } else { 0 }
+        $webrb  = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
+        $body   = '{"roblox":' + $roblox + ',"volt":' + $volt + ',"webrb":' + $webrb + '}'
+        Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
+    } catch { }
+}
+
 # ── Poll API ─────────────────────────────────────────────────────
 function PollApi {
     try {
@@ -289,7 +300,8 @@ Write-Host '  API  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $ApiUrl 
 Write-Host '  ID   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId -ForegroundColor Cyan
 Write-Host ''
 Separador; Write-Host ''
-wLog 'Monitor iniciado' 'OK'
+wLog 'Monitor iniciado [PAUSADO - despause pelo painel]' 'WARN'
+$host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'
 OrganizarJanela
 
 # ── Loop ─────────────────────────────────────────────────────────
@@ -302,6 +314,7 @@ while ($true) {
     }
 
     PollApi
+    if ($tick % 5  -eq 0) { ReportMetrics }
     if ($tick % 60 -eq 0) { CheckUpdate }
     CheckAndKillErrors
 
