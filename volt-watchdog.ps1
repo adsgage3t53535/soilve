@@ -1,16 +1,12 @@
 # ================================================================
-#  MONITOR - Volt Watchdog + Roblox Error Killer
+#  MONITOR - VoltPro Watchdog + Roblox Error Killer
 # ================================================================
-
 $host.UI.RawUI.WindowTitle = 'Monitor'
-Add-Type -AssemblyName System.Drawing
+
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public class WinAPI {
-    [DllImport("user32.dll")] public static extern IntPtr FindWindow(string a, string b);
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, ref RECT r);
-    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint f);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr i, int x, int y, int w, int ht, uint f);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int n);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
@@ -19,32 +15,31 @@ public class WinAPI {
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc p, IntPtr lp);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr wp, IntPtr lp2);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L,T,R,B; }
     public delegate bool EnumWindowsProc(IntPtr h, IntPtr lp);
 }
 '@ -ErrorAction SilentlyContinue
 
-# ── Configuracoes ───────────────────────────────────────────────
-$VoltExe     = $env:LOCALAPPDATA + '\Volt\tauri-app.exe'
-$AppTitle    = 'Volt'
+# ── Configuracoes ────────────────────────────────────────────────
+$VoltExe     = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.5.exe"
+$VoltProc    = 'VoltPro_6.5'
 $LogFile     = $env:TEMP + '\monitor.log'
 $StopFile    = $env:TEMP + '\monitor.stop'
-$WinW        = 900
-$WinH        = 500
-$CmdW        = 700
-$CmdH        = 500
+$WinW        = 900; $WinH = 500
+$CmdW        = 700; $CmdH = 500
 $ApiUrl      = 'https://vps-production-2bd3.up.railway.app'
-$_mac        = (Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1).MacAddress -replace '-',''
-$_suffix     = if ($_mac) { $_mac.Substring($_mac.Length - 4) } else { Get-Random -Maximum 9999 }
-$MachineId   = "$env:COMPUTERNAME-$_suffix"
+$GithubUrl   = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
 $WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
 $WebRBExe    = 'webrb.exe'
-$ErrorTitles = @('Error', 'Roblox Error', 'Crash', 'Disconnected', 'An error occurred', 'Notice')
+$ErrorTitles = @('Error','Roblox Error','Crash','Disconnected','An error occurred','Notice')
 
-# Estado
-$script:Paused = $false
+$_mac      = (Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1).MacAddress -replace '-',''
+$_suffix   = if ($_mac) { $_mac.Substring($_mac.Length - 4) } else { Get-Random -Maximum 9999 }
+$MachineId = "$env:COMPUTERNAME-$_suffix"
 
-# ── Log colorido ────────────────────────────────────────────────
+$script:Paused  = $false
+$script:CurHash = $null
+
+# ── Log ─────────────────────────────────────────────────────────
 function wLog($m, $l = 'INFO') {
     $time = Get-Date -f 'HH:mm:ss'
     $s    = '[' + (Get-Date -f 'yyyy-MM-dd HH:mm:ss') + '][' + $l + '] ' + $m
@@ -55,33 +50,27 @@ function wLog($m, $l = 'INFO') {
         'WARN'  { Write-Host 'AVISO  ' -NoNewline -ForegroundColor Yellow; Write-Host $m -ForegroundColor Yellow }
         'ERROR' { Write-Host 'ERRO   ' -NoNewline -ForegroundColor Red;    Write-Host $m -ForegroundColor Red    }
         'OK'    { Write-Host 'OK     ' -NoNewline -ForegroundColor Green;   Write-Host $m -ForegroundColor Green  }
-        'DEBUG' { Write-Host $m -ForegroundColor DarkGray }
         default { Write-Host $m -ForegroundColor White }
     }
     Add-Content $LogFile $s -Encoding UTF8
     $lines = Get-Content $LogFile -EA SilentlyContinue
     if ($lines.Count -gt 500) { $lines | Select-Object -Last 250 | Set-Content $LogFile -Encoding UTF8 }
 }
-
 function Separador { Write-Host ('  ' + ('-' * 60)) -ForegroundColor DarkGray }
 
-# ── Organizar janelas ───────────────────────────────────────────
+# ── Organizar janelas ────────────────────────────────────────────
 function OrganizarJanela {
     $sw = [WinAPI]::GetSystemMetrics(0)
     $sh = [WinAPI]::GetSystemMetrics(1)
-    $hwndVolt = [WinAPI]::FindWindow([NullString]::Value, $AppTitle)
-    if ($hwndVolt -ne [IntPtr]::Zero) {
+    $vProc = Get-Process -Name $VoltProc -EA SilentlyContinue | Select-Object -First 1
+    if ($vProc -and $vProc.MainWindowHandle -ne [IntPtr]::Zero) {
         $xV = $sw - $WinW - 10; $yV = $sh - $WinH - 50
-        [WinAPI]::SetWindowPos($hwndVolt, [IntPtr]::Zero, $xV, $yV, $WinW, $WinH, 0x0040) | Out-Null
+        [WinAPI]::SetWindowPos($vProc.MainWindowHandle, [IntPtr]::Zero, $xV, $yV, $WinW, $WinH, 0x0040) | Out-Null
     }
-    $hwndWebRB = [WinAPI]::FindWindow([NullString]::Value, 'WebRB')
-    if ($hwndWebRB -eq [IntPtr]::Zero) {
-        $pr = Get-Process -Name 'WebRB' -EA SilentlyContinue
-        if ($pr) { $hwndWebRB = $pr.MainWindowHandle }
-    }
-    if ($hwndWebRB -ne [IntPtr]::Zero) {
+    $wProc = Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1
+    if ($wProc -and $wProc.MainWindowHandle -ne [IntPtr]::Zero) {
         $xR = $sw - $WinW - 10; $yR = $sh - $WinH - 50 - $WinH - 10
-        [WinAPI]::SetWindowPos($hwndWebRB, [IntPtr]::Zero, $xR, $yR, $WinW, $WinH, 0x0040) | Out-Null
+        [WinAPI]::SetWindowPos($wProc.MainWindowHandle, [IntPtr]::Zero, $xR, $yR, $WinW, $WinH, 0x0040) | Out-Null
     }
     $hwndCmd = [WinAPI]::GetConsoleWindow()
     if ($hwndCmd -ne [IntPtr]::Zero) {
@@ -90,93 +79,88 @@ function OrganizarJanela {
     }
 }
 
-# ── Helper: % branca e preta de qualquer janela ─────────────────
-function GetScreenPcts($hwnd) {
-    $r = New-Object WinAPI+RECT
-    [WinAPI]::GetWindowRect($hwnd, [ref]$r) | Out-Null
-    $w = $r.R - $r.L; $h = $r.B - $r.T
-    if ($w -le 0 -or $h -le 0) { return $null }
-    $bmp = New-Object System.Drawing.Bitmap($w, $h)
-    $g   = [System.Drawing.Graphics]::FromImage($bmp)
-    $hdc = $g.GetHdc()
-    [WinAPI]::PrintWindow($hwnd, $hdc, 2) | Out-Null
-    $g.ReleaseHdc($hdc); $g.Dispose()
-    $white = 0; $black = 0
-    for ($x = 0; $x -lt $w; $x += 5) {
-        for ($y = 0; $y -lt $h; $y += 5) {
-            $c = $bmp.GetPixel($x, $y)
-            if ($c.R -gt 240 -and $c.G -gt 240 -and $c.B -gt 240) { $white++ }
-            elseif ($c.R -lt 15 -and $c.G -lt 15 -and $c.B -lt 15) { $black++ }
-        }
-    }
-    $bmp.Dispose()
-    $sampled = [math]::Floor($w / 5) * [math]::Floor($h / 5)
-    if ($sampled -eq 0) { return $null }
-    return @{
-        White = [math]::Round(($white / $sampled) * 100, 1)
-        Black = [math]::Round(($black / $sampled) * 100, 1)
-    }
+# ── VoltPro ──────────────────────────────────────────────────────
+function AbrirVolt {
+    wLog 'Abrindo VoltPro...' 'OK'
+    Start-Process $VoltExe
+    Start-Sleep 8
+    OrganizarJanela
 }
 
-# ── Analise de tela do Volt ─────────────────────────────────────
-function CheckVoltScreen {
-    $hwnd = [WinAPI]::FindWindow([NullString]::Value, $AppTitle)
-    if ($hwnd -eq [IntPtr]::Zero) { return 'none' }
-    $pcts = GetScreenPcts $hwnd
-    if (-not $pcts) { return 'none' }
-    if ($pcts.White -gt 40) { return 'white' }
-    if ($pcts.Black -gt 98) { return 'black' }
-    return 'ok'
+function FecharVolt {
+    wLog 'Fechando VoltPro...' 'WARN'
+    Get-Process -Name $VoltProc -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 }
 
-# ── Reiniciar Volt ──────────────────────────────────────────────
 function ReiniciarVolt {
     Separador
-    wLog 'Encerrando Volt...' 'WARN'
-    Get-Process | Where-Object { $_.MainWindowTitle -eq $AppTitle -or $_.ProcessName -eq 'tauri-app' } | Stop-Process -Force -EA SilentlyContinue
+    wLog 'Reiniciando VoltPro...' 'WARN'
+    Get-Process -Name $VoltProc -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
     Start-Sleep 3
-    wLog 'Iniciando Volt...' 'WARN'
     Start-Process $VoltExe
     Start-Sleep 8
     OrganizarJanela
     Separador
 }
 
-# ── Fechar Volt ─────────────────────────────────────────────────
-function FecharVolt {
-    wLog 'Fechando Volt...' 'WARN'
-    Get-Process | Where-Object { $_.MainWindowTitle -eq $AppTitle -or $_.ProcessName -eq 'tauri-app' } | Stop-Process -Force -EA SilentlyContinue
-}
-
-# ── Abrir Volt ──────────────────────────────────────────────────
-function AbrirVolt {
-    wLog 'Abrindo Volt...' 'OK'
-    Start-Process $VoltExe
-    Start-Sleep 8
-    OrganizarJanela
-}
-
-# ── Abrir WebRB ─────────────────────────────────────────────────
+# ── WebRB / Yummy ────────────────────────────────────────────────
 function AbrirWebRB {
     wLog 'Abrindo WebRB...' 'OK'
     Start-Process 'cmd.exe' -ArgumentList "/c cd /d `"$WebRBDir`" & start `"`" `"$WebRBExe`""
 }
 
-# ── Fechar WebRB ────────────────────────────────────────────────
 function FecharWebRB {
-    wLog 'Fechando WebRB...' 'WARN'
-    Get-Process -Name 'WebRB' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
-    Get-Process -Name 'webrb' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    wLog 'Fechando WebRB/Yummy...' 'WARN'
+    'webrb','WebRB','YummyWebPlayer','yummy' | ForEach-Object {
+        Get-Process -Name $_ -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    }
+    # Kill by window title containing Yummy
+    Get-Process -EA SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*Yummy*' -or $_.MainWindowTitle -like '*WebRB*' } | Stop-Process -Force -EA SilentlyContinue
 }
 
-# ── Definir autoexec do Volt ─────────────────────────────────────
+# ── Roblox ───────────────────────────────────────────────────────
+function FecharTodosRoblox {
+    $procs = Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue
+    if ($procs) {
+        wLog "Fechando $($procs.Count) processo(s) Roblox..." 'WARN'
+        $procs | Stop-Process -Force -EA SilentlyContinue
+    }
+    Get-Process -Name 'RobloxCrashHandler' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+}
+
+# ── Fechar tudo ──────────────────────────────────────────────────
+function FecharTudo {
+    FecharTodosRoblox
+    FecharVolt
+    FecharWebRB
+}
+
+# ── Reiniciar tudo ───────────────────────────────────────────────
+function ReiniciarTudo {
+    Separador
+    wLog 'REINICIANDO TUDO...' 'WARN'
+    FecharTodosRoblox
+    FecharVolt
+    FecharWebRB
+    Start-Sleep 3
+    wLog 'Abrindo VoltPro...' 'OK'
+    Start-Process $VoltExe
+    Start-Sleep 10
+    wLog 'Abrindo WebRB...' 'OK'
+    AbrirWebRB
+    Start-Sleep 5
+    OrganizarJanela
+    Separador
+}
+
+# ── Autoexec ─────────────────────────────────────────────────────
 function SetAutoexec($url) {
     $dir = $env:LOCALAPPDATA + '\Volt\autoexec'
     try {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
         Get-ChildItem $dir -Filter '*.txt' | Remove-Item -Force -EA SilentlyContinue
         $fileName = [System.IO.Path]::GetFileName(([uri]$url).LocalPath)
-        if (-not $fileName) { $fileName = 'Script.txt' }
+        if (-not $fileName -or $fileName -notmatch '\.\w+$') { $fileName = 'Script.txt' }
         $dest = "$dir\$fileName"
         Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 15 -EA Stop
         wLog "Autoexec baixado: $fileName" 'OK'
@@ -185,9 +169,9 @@ function SetAutoexec($url) {
     }
 }
 
-# ── Fechar erros Roblox (EnumWindows) ───────────────────────────
+# ── Fechar erros Roblox ──────────────────────────────────────────
 function CheckAndKillErrors {
-    $robloxPids = (Get-Process -Name 'RobloxPlayerBeta' -EA SilentlyContinue).Id
+    $robloxPids = (Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Id
     if (-not $robloxPids) { return }
     $callback = [WinAPI+EnumWindowsProc]{
         param($hwnd, $lp)
@@ -200,7 +184,7 @@ function CheckAndKillErrors {
                 $title = $sb.ToString()
                 foreach ($t in $ErrorTitles) {
                     if ($title -eq $t -or $title -like "*$t*") {
-                        wLog "Roblox janela fechada: '$title'" 'OK'
+                        wLog "Roblox erro fechado: '$title'" 'OK'
                         [WinAPI]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
                         break
                     }
@@ -212,10 +196,7 @@ function CheckAndKillErrors {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
-# ── Auto-update (compara hash direto no GitHub) ───────────
-$GithubUrl      = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
-$script:CurHash = $null
-
+# ── Auto-update ──────────────────────────────────────────────────
 function CheckUpdate {
     try {
         $raw   = (Invoke-WebRequest -Uri $GithubUrl -UseBasicParsing -TimeoutSec 10 -EA Stop).Content
@@ -224,132 +205,101 @@ function CheckUpdate {
         if ($null -eq $script:CurHash) {
             $script:CurHash = $hash
         } elseif ($hash -ne $script:CurHash) {
-            wLog 'Nova versao detectada no GitHub. Reiniciando...' 'WARN'
+            wLog 'Nova versao detectada. Reiniciando...' 'WARN'
             Start-Sleep 2
-            $restartCmd = 'iex (irm ''' + $GithubUrl + ''')'
-            Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $restartCmd"
+            $c = 'iex (irm ''' + $GithubUrl + ''')'
+            Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $c"
             exit
         }
     } catch { }
 }
 
-# ── Poll do servidor Railway ─────────────────────────────────────
+# ── Poll API ─────────────────────────────────────────────────────
 function PollApi {
     try {
         $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -TimeoutSec 5 -EA Stop
         foreach ($item in $r.commands) {
-            # suporta tanto string simples quanto objeto {cmd, data}
             if ($item -is [string]) { $cmd = $item; $data = $null }
             else                    { $cmd = $item.cmd; $data = $item.data }
-
             switch ($cmd) {
-                'open_webrb'       { AbrirWebRB }
-                'close_webrb'      { FecharWebRB }
                 'open_volt'        { AbrirVolt }
                 'close_volt'       { FecharVolt }
-                'restart_volt'     { wLog 'API: reiniciando Volt...' 'OK'; ReiniciarVolt }
+                'restart_volt'     { wLog 'Reiniciando VoltPro...' 'OK'; ReiniciarVolt }
+                'open_webrb'       { AbrirWebRB }
+                'close_webrb'      { FecharWebRB }
                 'close_all_roblox' { FecharTodosRoblox }
-                'restart_all'      { wLog 'API: reiniciando tudo...' 'OK'; ReiniciarTudo }
-                'organize_windows' { wLog 'API: organizando janelas...' 'OK'; OrganizarJanela }
+                'restart_all'      { ReiniciarTudo }
+                'organize_windows' { OrganizarJanela }
                 'restart_cmd'      {
-                    wLog 'API: reiniciando CMD...' 'WARN'
+                    wLog 'Reiniciando CMD...' 'WARN'
                     Start-Sleep 1
-                    $restartCmd = 'iex (irm ''' + $GithubUrl + ''')'
-                    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $restartCmd"
+                    $c = 'iex (irm ''' + $GithubUrl + ''')'
+                    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $c"
                     exit
                 }
                 'set_autoexec'     {
                     if ($data) { SetAutoexec $data }
-                    else { wLog 'set_autoexec: conteudo vazio' 'WARN' }
+                    else { wLog 'set_autoexec: URL vazia' 'WARN' }
                 }
                 'restart_pc'       {
-                    wLog 'API: reiniciando PC em 5s...' 'WARN'
-                    FecharTudo
-                    Start-Sleep 5
-                    Restart-Computer -Force
+                    wLog 'Reiniciando PC em 5s...' 'WARN'
+                    FecharTudo; Start-Sleep 5; Restart-Computer -Force
                 }
                 'pause' {
                     $script:Paused = $true
                     $host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'
-                    wLog 'Monitor PAUSADO por comando API.' 'WARN'
+                    wLog 'Monitor PAUSADO.' 'WARN'
                 }
                 'resume' {
                     $script:Paused = $false
                     $host.UI.RawUI.WindowTitle = 'Monitor'
-                    wLog 'Monitor RETOMADO por comando API.' 'OK'
+                    wLog 'Monitor RETOMADO.' 'OK'
                 }
-                default { wLog "API: comando desconhecido: $cmd" 'WARN' }
+                default { wLog "Comando desconhecido: $cmd" 'WARN' }
             }
         }
     } catch { }
 }
 
-# ── Inicializacao ───────────────────────────────────────────────
+# ── Init ─────────────────────────────────────────────────────────
 Clear-Host
 Write-Host ''
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
-Write-Host '  |         MONITOR  -  Volt Watchdog + Roblox Killer        |' -ForegroundColor DarkCyan
+Write-Host '  |        MONITOR  -  VoltPro Watchdog + Roblox Killer      |' -ForegroundColor DarkCyan
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
 Write-Host ''
 Write-Host '  Volt : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe   -ForegroundColor Cyan
-Write-Host '  Log  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $LogFile   -ForegroundColor Cyan
 Write-Host '  API  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $ApiUrl    -ForegroundColor Cyan
 Write-Host '  ID   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId -ForegroundColor Cyan
 Write-Host ''
-Separador
-Write-Host ''
+Separador; Write-Host ''
 wLog 'Monitor iniciado' 'OK'
 OrganizarJanela
 
-# ── Loop principal (tick = 1s) ───────────────────────────────────
+# ── Loop ─────────────────────────────────────────────────────────
 $tick = 0
 while ($true) {
-
     if (Test-Path $StopFile) {
         Write-Host ''; Separador
         wLog 'Stop-file detectado. Encerrando.' 'WARN'
         Remove-Item $StopFile -Force; break
     }
 
-    # Sempre: poll API (aceita comandos manuais mesmo pausado)
     PollApi
-
-    # Auto-update: verifica nova versao a cada 60s
     if ($tick % 60 -eq 0) { CheckUpdate }
-
-    # Sempre: fecha erros Roblox instantaneamente
     CheckAndKillErrors
 
-    # Automatico apenas se nao pausado
     if (-not $script:Paused) {
-
-        # Volt: checks a cada 10s
         if ($tick % 10 -eq 0) {
-            $voltProc = Get-Process -Name 'tauri-app' -EA SilentlyContinue
+            $voltProc = Get-Process -Name $VoltProc -EA SilentlyContinue
             if (-not $voltProc) {
-                wLog 'tauri-app.exe nao encontrado. Iniciando Volt...' 'WARN'
+                wLog 'VoltPro nao encontrado. Iniciando...' 'WARN'
                 Start-Process $VoltExe
                 Start-Sleep 10
                 OrganizarJanela
-                $tick++
-                Start-Sleep 1
-                continue
-            }
-            $webviews = Get-Process msedgewebview2 -EA SilentlyContinue
-            if (-not $webviews) {
-                wLog 'WebView2 ausente! Reiniciando Volt...' 'ERROR'
-                ReiniciarVolt
+                $tick++; Start-Sleep 1; continue
             }
         }
-
-        # Volt: checa tela branca/preta a cada 20s
-        if ($tick % 20 -eq 0) {
-            $screen = CheckVoltScreen
-            if ($screen -eq 'white')     { wLog 'Volt tela branca. Reiniciando...' 'WARN';  ReiniciarVolt }
-            elseif ($screen -eq 'black') { wLog 'Volt tela preta. Reiniciando...'  'ERROR'; ReiniciarVolt }
-        }
-
-        # Organiza janelas a cada 60s
         if ($tick % 60 -eq 0 -and $tick -gt 0) { OrganizarJanela }
     }
 
