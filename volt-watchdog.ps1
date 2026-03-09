@@ -21,7 +21,14 @@ public class WinAPI {
 
 # ── Configuracoes ────────────────────────────────────────────────
 $VoltExe     = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.5.exe"
-$VoltProc    = 'VoltPro_6.5'
+$VoltProc    = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
+
+# Helper: encontra processo do VoltPro pelo caminho do exe
+function GetVoltProc {
+    Get-Process -EA SilentlyContinue | Where-Object {
+        try { $_.Path -eq $VoltExe } catch { $false }
+    } | Select-Object -First 1
+}
 $LogFile     = $env:TEMP + '\monitor.log'
 $StopFile    = $env:TEMP + '\monitor.stop'
 $WinW        = 900; $WinH = 500
@@ -62,7 +69,7 @@ function Separador { Write-Host ('  ' + ('-' * 60)) -ForegroundColor DarkGray }
 function OrganizarJanela {
     $sw = [WinAPI]::GetSystemMetrics(0)
     $sh = [WinAPI]::GetSystemMetrics(1)
-    $vProc = Get-Process -Name $VoltProc -EA SilentlyContinue | Select-Object -First 1
+    $vProc = GetVoltProc
     if ($vProc -and $vProc.MainWindowHandle -ne [IntPtr]::Zero) {
         $xV = $sw - $WinW - 10; $yV = $sh - $WinH - 50
         [WinAPI]::SetWindowPos($vProc.MainWindowHandle, [IntPtr]::Zero, $xV, $yV, $WinW, $WinH, 0x0040) | Out-Null
@@ -89,13 +96,13 @@ function AbrirVolt {
 
 function FecharVolt {
     wLog 'Fechando VoltPro...' 'WARN'
-    Get-Process -Name $VoltProc -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    GetVoltProc | Stop-Process -Force -EA SilentlyContinue
 }
 
 function ReiniciarVolt {
     Separador
     wLog 'Reiniciando VoltPro...' 'WARN'
-    Get-Process -Name $VoltProc -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    GetVoltProc | Stop-Process -Force -EA SilentlyContinue
     Start-Sleep 3
     Start-Process $VoltExe
     Start-Sleep 8
@@ -291,7 +298,7 @@ while ($true) {
 
     if (-not $script:Paused) {
         if ($tick % 10 -eq 0) {
-            $voltProc = Get-Process -Name $VoltProc -EA SilentlyContinue
+            $voltProc = GetVoltProc
             if (-not $voltProc) {
                 wLog 'VoltPro nao encontrado. Iniciando...' 'WARN'
                 Start-Process $VoltExe
