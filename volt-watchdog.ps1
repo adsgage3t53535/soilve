@@ -20,7 +20,7 @@ public class WinAPI {
 '@ -ErrorAction SilentlyContinue
 
 # ── Configuracoes ────────────────────────────────────────────────
-$VoltExe     = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.5.exe"
+$VoltExe     = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.6.exe"
 $VoltProc    = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
 
 # Helper: encontra processo do VoltPro pelo caminho do exe
@@ -46,7 +46,7 @@ $MachineId = try {
     if ($j.Note) { $j.Note } else { $env:COMPUTERNAME }
 } catch { $env:COMPUTERNAME }
 
-$script:Paused  = $true   # inicia pausado — despause pelo painel
+$script:Paused  = $false
 $script:CurHash = $null
 
 # ── Log ─────────────────────────────────────────────────────────
@@ -270,7 +270,9 @@ function PollApi {
                 }
                 'restart_pc'       {
                     wLog 'Reiniciando PC em 5s...' 'WARN'
-                    FecharTudo; Start-Sleep 5; Restart-Computer -Force
+                    FecharTudo
+                    Start-Sleep 5
+                    Start-Process 'shutdown.exe' -ArgumentList '/r /t 0 /f' -NoNewWindow
                 }
                 'pause' {
                     $script:Paused = $true
@@ -300,8 +302,8 @@ Write-Host '  API  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $ApiUrl 
 Write-Host '  ID   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId -ForegroundColor Cyan
 Write-Host ''
 Separador; Write-Host ''
-wLog 'Monitor iniciado [PAUSADO - despause pelo painel]' 'WARN'
-$host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'
+wLog 'Monitor iniciado' 'OK'
+$host.UI.RawUI.WindowTitle = 'Monitor'
 OrganizarJanela
 
 # ── Loop ─────────────────────────────────────────────────────────
