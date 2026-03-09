@@ -34,6 +34,8 @@ $StopFile    = $env:TEMP + '\monitor.stop'
 $WinW        = 900; $WinH = 500
 $CmdW        = 700; $CmdH = 500
 $ApiUrl      = 'https://vps-production-2bd3.up.railway.app'
+$ApiKey      = 'GobrinNoti'   # deve ser igual ao MONITOR_API_KEY no Railway
+$ApiHeaders  = @{ 'X-Api-Key' = $ApiKey }
 $GithubUrl   = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
 $WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
 $WebRBExe    = 'webrb.exe'
@@ -153,7 +155,7 @@ function ReiniciarTudo {
     FecharVolt
     FecharWebRB
     # Limpa workspace do Volt
-    $wsDir = $env:LOCALAPPDATA + '\Volt\workspace'
+    $wsDir = $env:USERPROFILE + '\Desktop\VoltBlack\workspace'
     if (Test-Path $wsDir) {
         Get-ChildItem $wsDir -Recurse | Remove-Item -Force -Recurse -EA SilentlyContinue
         wLog 'Workspace limpo.' 'OK'
@@ -171,7 +173,7 @@ function ReiniciarTudo {
 
 # ── Autoexec ─────────────────────────────────────────────────────
 function SetAutoexec($url) {
-    $dir = $env:LOCALAPPDATA + '\Volt\autoexec'
+    $dir = $env:USERPROFILE + '\Desktop\VoltBlack\autoexec'
     try {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
         Get-ChildItem $dir -Filter '*.txt' | Remove-Item -Force -EA SilentlyContinue
@@ -237,14 +239,14 @@ function ReportMetrics {
         $volt   = if (GetVoltProc) { 1 } else { 0 }
         $webrb  = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
         $body   = '{"roblox":' + $roblox + ',"volt":' + $volt + ',"webrb":' + $webrb + '}'
-        Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
+        Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
     } catch { }
 }
 
 # ── Poll API ─────────────────────────────────────────────────────
 function PollApi {
     try {
-        $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -TimeoutSec 5 -EA Stop
+        $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -Headers $ApiHeaders -TimeoutSec 5 -EA Stop
         foreach ($item in $r.commands) {
             if ($item -is [string]) { $cmd = $item; $data = $null }
             else                    { $cmd = $item.cmd; $data = $item.data }
