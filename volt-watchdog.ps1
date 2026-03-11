@@ -34,7 +34,7 @@ $StopFile    = $env:TEMP + '\monitor.stop'
 $WinW        = 900; $WinH = 500
 $CmdW        = 700; $CmdH = 500
 $ApiUrl      = 'https://vps-production-2bd3.up.railway.app'
-$ApiKey      = 'GobrinNoti'   # deve ser igual ao MONITOR_API_KEY no Railway
+$ApiKey      = 'GobrinNoti'
 $ApiHeaders  = @{ 'X-Api-Key' = $ApiKey }
 $GithubUrl   = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
 $WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
