@@ -243,6 +243,15 @@ function ReportMetrics {
     } catch { }
 }
 
+# ── ACK helper ───────────────────────────────────────────────────
+function SendAck($cmd, $success, $errMsg) {
+    try {
+        $body = @{ cmd = $cmd; success = $success } | ConvertTo-Json -Compress
+        if ($errMsg) { $body = @{ cmd = $cmd; success = $false; error = $errMsg } | ConvertTo-Json -Compress }
+        Invoke-RestMethod -Uri "$ApiUrl/ack/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
+    } catch { }
+}
+
 # ── Poll API ─────────────────────────────────────────────────────
 function PollApi {
     try {
@@ -251,15 +260,16 @@ function PollApi {
             if ($item -is [string]) { $cmd = $item; $data = $null }
             else                    { $cmd = $item.cmd; $data = $item.data }
             switch ($cmd) {
-                'open_volt'        { AbrirVolt }
-                'close_volt'       { FecharVolt }
-                'restart_volt'     { wLog 'Reiniciando VoltPro...' 'OK'; ReiniciarVolt }
-                'open_webrb'       { AbrirWebRB }
-                'close_webrb'      { FecharWebRB }
-                'close_all_roblox' { FecharTodosRoblox }
-                'restart_all'      { ReiniciarTudo }
-                'organize_windows' { OrganizarJanela }
+                'open_volt'        { try { AbrirVolt;         SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'close_volt'       { try { FecharVolt;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'restart_volt'     { try { wLog 'Reiniciando VoltPro...' 'OK'; ReiniciarVolt; SendAck $cmd $true } catch { SendAck $cmd $false "$_" } }
+                'open_webrb'       { try { AbrirWebRB;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'close_webrb'      { try { FecharWebRB;       SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'close_all_roblox' { try { FecharTodosRoblox; SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'restart_all'      { try { ReiniciarTudo;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'organize_windows' { try { OrganizarJanela;   SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
                 'restart_cmd'      {
+                    SendAck $cmd $true
                     wLog 'Reiniciando CMD...' 'WARN'
                     Start-Sleep 1
                     $c = 'iex (irm ''' + $GithubUrl + ''')'
@@ -267,26 +277,57 @@ function PollApi {
                     exit
                 }
                 'set_autoexec'     {
-                    if ($data) { SetAutoexec $data }
-                    else { wLog 'set_autoexec: URL vazia' 'WARN' }
+                    if ($data) {
+                        try { SetAutoexec $data; SendAck $cmd $true }
+                        catch { SendAck $cmd $false "$_" }
+                    } else { wLog 'set_autoexec: URL vazia' 'WARN'; SendAck $cmd $false 'URL vazia' }
+                }
+                'set_cookies'      {
+                    $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
+                    if ($data) {
+                        try {
+                            $lista = $data | Where-Object { $_ -ne $null -and $_.Trim() -ne '' }
+                            $unicos = $lista | Select-Object -Unique
+                            [System.IO.File]::WriteAllLines($cookiePath, $unicos, [System.Text.UTF8Encoding]::new($false))
+                            wLog "Cookies gravados: $($unicos.Count) linhas" 'OK'
+                            SendAck $cmd $true
+                        } catch { wLog "Erro ao gravar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                    } else { wLog 'set_cookies: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
+                }
+                'clear_cookies'    {
+                    $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
+                    try {
+                        [System.IO.File]::WriteAllText($cookiePath, '')
+                        wLog 'cookie.txt limpo' 'OK'
+                        SendAck $cmd $true
+                    } catch { wLog "Erro ao limpar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
                 }
                 'restart_pc'       {
-                    wLog 'Reiniciando PC em 5s...' 'WARN'
-                    FecharTudo
-                    Start-Sleep 5
-                    Start-Process 'shutdown.exe' -ArgumentList '/r /t 0 /f' -NoNewWindow
+                    wLog 'Reiniciando PC...' 'WARN'
+                    try { FecharTudo } catch { wLog "Aviso ao fechar processos: $_" 'WARN' }
+                    Start-Sleep 2
+                    try {
+                        & cmd.exe /c "shutdown /r /t 3 /f" 2>&1 | Out-Null
+                        wLog 'Comando de reinicio enviado.' 'OK'
+                        SendAck $cmd $true
+                    } catch {
+                        wLog "Erro ao reiniciar: $_" 'ERROR'
+                        SendAck $cmd $false "$_"
+                    }
                 }
                 'pause' {
                     $script:Paused = $true
                     $host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'
                     wLog 'Monitor PAUSADO.' 'WARN'
+                    SendAck $cmd $true
                 }
                 'resume' {
                     $script:Paused = $false
                     $host.UI.RawUI.WindowTitle = 'Monitor'
                     wLog 'Monitor RETOMADO.' 'OK'
+                    SendAck $cmd $true
                 }
-                default { wLog "Comando desconhecido: $cmd" 'WARN' }
+                default { wLog "Comando desconhecido: $cmd" 'WARN'; SendAck $cmd $false 'desconhecido' }
             }
         }
     } catch { }
@@ -300,7 +341,6 @@ Write-Host '  |        MONITOR  -  VoltPro Watchdog + Roblox Killer      |' -For
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
 Write-Host ''
 Write-Host '  Volt : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe   -ForegroundColor Cyan
-Write-Host '  API  : ' -NoNewline -ForegroundColor DarkGray; Write-Host $ApiUrl    -ForegroundColor Cyan
 Write-Host '  ID   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId -ForegroundColor Cyan
 Write-Host ''
 Separador; Write-Host ''
