@@ -300,7 +300,28 @@ function PollApi {
                         } catch { wLog "Erro ao gravar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
                     } else { wLog 'set_cookies: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
                 }
-                'clear_cookies'    {
+                'clear_switched'   {
+                    $swDir = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\switched"
+                    try {
+                        if (Test-Path $swDir) {
+                            $files = Get-ChildItem $swDir -Filter '*.txt' -EA SilentlyContinue
+                            $files | Remove-Item -Force -EA SilentlyContinue
+                            wLog "Pasta switched limpa: $($files.Count) arquivo(s) removido(s)" 'OK'
+                        } else { wLog 'Pasta switched nao encontrada' 'WARN' }
+                        SendAck $cmd $true
+                    } catch { wLog "Erro ao limpar switched: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                }
+                'set_config'       {
+                    $cfgPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\config.json"
+                    if ($data) {
+                        try {
+                            $json = $data | ConvertTo-Json -Compress -Depth 10
+                            [System.IO.File]::WriteAllText($cfgPath, $json, [System.Text.UTF8Encoding]::new($false))
+                            wLog 'config.json atualizado' 'OK'
+                            SendAck $cmd $true
+                        } catch { wLog "Erro ao gravar config.json: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                    } else { wLog 'set_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
+                }
                     $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
                     try {
                         [System.IO.File]::WriteAllText($cookiePath, '')
