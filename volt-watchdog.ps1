@@ -252,10 +252,16 @@ function SendAck($cmd, $success, $errMsg) {
     } catch { }
 }
 
+$script:PollFailCount = 0
+
 # ── Poll API ─────────────────────────────────────────────────────
 function PollApi {
     try {
         $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -Headers $ApiHeaders -TimeoutSec 5 -EA Stop
+        if ($script:PollFailCount -gt 0) {
+            wLog "Conexao restaurada apos $($script:PollFailCount) falhas." 'OK'
+            $script:PollFailCount = 0
+        }
         foreach ($item in $r.commands) {
             if ($item -is [string]) { $cmd = $item; $data = $null }
             else                    { $cmd = $item.cmd; $data = $item.data }
@@ -330,7 +336,12 @@ function PollApi {
                 default { wLog "Comando desconhecido: $cmd" 'WARN'; SendAck $cmd $false 'desconhecido' }
             }
         }
-    } catch { }
+    } catch {
+        $script:PollFailCount++
+        if ($script:PollFailCount -eq 1 -or $script:PollFailCount % 30 -eq 0) {
+            wLog "Falha ao conectar ao servidor ($($script:PollFailCount)x): $_" 'WARN'
+        }
+    }
 }
 
 # ── Init ─────────────────────────────────────────────────────────
