@@ -322,6 +322,7 @@ function PollApi {
                         } catch { wLog "Erro ao gravar config.json: $_" 'ERROR'; SendAck $cmd $false "$_" }
                     } else { wLog 'set_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
                 }
+                'clear_cookies'    {
                     $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
                     try {
                         [System.IO.File]::WriteAllText($cookiePath, '')
