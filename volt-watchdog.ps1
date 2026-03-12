@@ -316,14 +316,16 @@ function PollApi {
                     if ($data) {
                         try {
                             # lê config atual para preservar password e username
-                            $existing = if (Test-Path $cfgPath) {
-                                Get-Content $cfgPath -Raw -EA Stop | ConvertFrom-Json
-                            } else { [PSCustomObject]@{} }
+                            if (Test-Path $cfgPath) {
+                                $existing = Get-Content $cfgPath -Raw -EA Stop | ConvertFrom-Json
+                            } else {
+                                $existing = [PSCustomObject]@{}
+                            }
 
-                            # converte data recebido para hashtable
+                            # converte data recebido
                             $novo = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
 
-                            # aplica cada campo recebido, ignorando password e username
+                            # aplica cada campo, ignorando password e username
                             $novo.PSObject.Properties | ForEach-Object {
                                 if ($_.Name -ne 'password' -and $_.Name -ne 'username') {
                                     $existing | Add-Member -MemberType NoteProperty -Name $_.Name -Value $_.Value -Force
@@ -336,6 +338,7 @@ function PollApi {
                         } catch { wLog "Erro ao gravar volt_config: $_" 'ERROR'; SendAck $cmd $false "$_" }
                     } else { wLog 'apply_volt_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
                 }
+                'apply_webrb_config' {
                     try {
                         $u   = $env:USERNAME
                         $d   = "C:\Users\$u\Desktop\WebRB\YummyWebPlayer"
