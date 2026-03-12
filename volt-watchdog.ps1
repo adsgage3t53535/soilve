@@ -315,104 +315,37 @@ function PollApi {
                     $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
                     if ($data) {
                         try {
-                            # lê config atual para preservar password e username
+                            # preserva password e username do arquivo existente
+                            $keep = @{ password = $null; username = $null }
                             if (Test-Path $cfgPath) {
-                                $existing = Get-Content $cfgPath -Raw -EA Stop | ConvertFrom-Json
-                            } else {
-                                $existing = [PSCustomObject]@{}
+                                $cur = Get-Content $cfgPath -Raw | ConvertFrom-Json
+                                $keep.password = $cur.password
+                                $keep.username  = $cur.username
                             }
-
-                            # converte data recebido
-                            $novo = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
-
-                            # aplica cada campo, ignorando password e username
-                            $novo.PSObject.Properties | ForEach-Object {
-                                if ($_.Name -ne 'password' -and $_.Name -ne 'username') {
-                                    $existing | Add-Member -MemberType NoteProperty -Name $_.Name -Value $_.Value -Force
-                                }
-                            }
-
-                            $existing | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
+                            # converte data para PSObject e injeta as credenciais preservadas
+                            $obj = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+                            if ($keep.password) { $obj | Add-Member -MemberType NoteProperty -Name 'password' -Value $keep.password -Force }
+                            if ($keep.username)  { $obj | Add-Member -MemberType NoteProperty -Name 'username'  -Value $keep.username  -Force }
+                            $obj | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
                             wLog 'volt_config.json atualizado' 'OK'
                             SendAck $cmd $true
                         } catch { wLog "Erro ao gravar volt_config: $_" 'ERROR'; SendAck $cmd $false "$_" }
                     } else { wLog 'apply_volt_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
                 }
                 'apply_webrb_config' {
-                    try {
-                        $u   = $env:USERNAME
-                        $d   = "C:\Users\$u\Desktop\WebRB\YummyWebPlayer"
-                        $p   = "$d\config.json"
-                        $ws  = "C:\Users\$u\Desktop\VoltBlack\workspace"
-                        $fps = "C:\Users\$u\Desktop\Roblox\FpsUnlocker"
-                        $exp = "C:\Users\$u\Desktop\VoltBlack"
-                        $json = [ordered]@{
-                            PlaceId                                    = '109983668079237'
-                            DelayOpen                                  = 9
-                            Sort                                       = $true
-                            Minimize                                   = $false
-                            'Exploit WorkSpace Folder'                 = $ws
-                            'Private Server'                           = $false
-                            'Change Account Bloxfruit'                 = $false
-                            'Total Instance'                           = 35
-                            'Display Username'                         = $true
-                            'Set Affinity'                             = $false
-                            'Restart Roblox Every [H]'                 = 30
-                            'Kill Process > Ram'                       = $false
-                            'Ram Usage (Each Process)'                 = 3
-                            'Change Account (Custom)'                  = $false
-                            'Check Banned Account and Change'          = $false
-                            'Startup With Windows'                     = $false
-                            'Affinity Core'                            = 2
-                            'Thread Check Cookie'                      = 100
-                            'Fps Unlocker Folder'                      = $fps
-                            'Delay Prevent Same Account'               = 10
-                            'Auto Detect/Run Update.exe'               = $true
-                            'Webhook Url'                              = ''
-                            'Webhook Delay Send [M]'                   = 5
-                            'Change Account Pet99'                     = $false
-                            'Custom Exploit Folder'                    = $exp
-                            'Delay Minimize'                           = 1
-                            'Mute Sounds'                              = $true
-                            'Windows Per Rows'                         = 10
-                            'Fixed Size'                               = '85x85'
-                            'Old Sort'                                 = $false
-                            'Use With RobloxAccManager'                = $false
-                            'Run Multi PlaceId'                        = $false
-                            'Low Server'                               = $false
-                            'Enable Multi Instances'                   = $true
-                            'Check More Infor When Change Acc Bloxfruit' = $false
-                            'Delete the account after changing the account' = $false
-                            'Close Roblox (Captcha)'                   = $false
-                            'Threading Delay'                          = 30
-                            'Close Roblox (Captcha) Delay'             = 1
-                            'Custom ApiKey'                            = ''
-                            'Hourly Change Account'                    = $false
-                            'Hourly Change Account [H]'                = 5
-                            'Change Account (Captcha)'                 = $false
-                            'Custom ApiURL'                            = ''
-                            'Suspend Roblox After Launch'              = $false
-                            'Suspend Roblox After Launch [s]'          = 5
-                            'Set Priority Low'                         = $false
-                            'Disable Kill Suspended Roblox'            = $false
-                            'Kill Seliware Error Message'              = $false
-                            'Solve Captcha'                            = $true
-                            'Yescaptcha Key'                           = ''
-                            'Omocaptcha Key'                           = 'OMO_74YKPZYVGDTNOW6SO2M5W0VWDZJC6CPM7YS6HBNZKFLWNYGZ3WZKFPK8J9UVHC1769261745'
-                            'Change Account When Captcha Unsolved'     = $false
-                            'Limit Solve Captcha Calls'                = $false
-                            'Solve Pow Only'                           = $false
-                            'Auto Delete Temp'                         = $true
-                            'Check Captcha Before Teleport'            = $false
-                            'Skip Solve Captcha In Browser'            = $true
-                        }
-                        New-Item -ItemType Directory -Force -Path $d | Out-Null
-                        $json | ConvertTo-Json | Set-Content -Path $p -Encoding UTF8
-                        wLog "config.json aplicado para: $u" 'OK'
-                        Start-Sleep 1
-                        AbrirWebRB
-                        SendAck $cmd $true
-                    } catch { wLog "Erro ao aplicar config: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                    $cfgPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\config.json"
+                    if ($data) {
+                        try {
+                            $dir = Split-Path $cfgPath
+                            if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+                            # converte para JSON string, substitui qualquer C:\Users\QUALQUER\ pelo usuario correto
+                            $json = $data | ConvertTo-Json -Depth 10
+                            $json = $json -replace 'C:\\\\Users\\\\[^\\\\]+\\\\', "C:\\\\Users\\\\$($env:USERNAME)\\\\"
+                            $json | Set-Content -Path $cfgPath -Encoding UTF8
+                            wLog "config.json (WebRB) atualizado com caminhos de: $($env:USERNAME)" 'OK'
+                            SendAck $cmd $true
+                        } catch { wLog "Erro ao gravar config.json: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                    } else { wLog 'apply_webrb_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
                 }
                 'clear_cookies'    {
                     $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
