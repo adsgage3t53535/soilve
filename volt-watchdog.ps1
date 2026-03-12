@@ -311,16 +311,105 @@ function PollApi {
                         SendAck $cmd $true
                     } catch { wLog "Erro ao limpar switched: $_" 'ERROR'; SendAck $cmd $false "$_" }
                 }
-                'set_config'       {
-                    $cfgPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\config.json"
+                'apply_volt_config' {
+                    $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
                     if ($data) {
                         try {
-                            $json = $data | ConvertTo-Json -Compress -Depth 10
-                            [System.IO.File]::WriteAllText($cfgPath, $json, [System.Text.UTF8Encoding]::new($false))
-                            wLog 'config.json atualizado' 'OK'
+                            # lê config atual para preservar password e username
+                            $existing = if (Test-Path $cfgPath) {
+                                Get-Content $cfgPath -Raw -EA Stop | ConvertFrom-Json
+                            } else { [PSCustomObject]@{} }
+
+                            # converte data recebido para hashtable
+                            $novo = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+
+                            # aplica cada campo recebido, ignorando password e username
+                            $novo.PSObject.Properties | ForEach-Object {
+                                if ($_.Name -ne 'password' -and $_.Name -ne 'username') {
+                                    $existing | Add-Member -MemberType NoteProperty -Name $_.Name -Value $_.Value -Force
+                                }
+                            }
+
+                            $existing | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
+                            wLog 'volt_config.json atualizado' 'OK'
                             SendAck $cmd $true
-                        } catch { wLog "Erro ao gravar config.json: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                    } else { wLog 'set_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
+                        } catch { wLog "Erro ao gravar volt_config: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                    } else { wLog 'apply_volt_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
+                }
+                    try {
+                        $u   = $env:USERNAME
+                        $d   = "C:\Users\$u\Desktop\WebRB\YummyWebPlayer"
+                        $p   = "$d\config.json"
+                        $ws  = "C:\Users\$u\Desktop\VoltBlack\workspace"
+                        $fps = "C:\Users\$u\Desktop\Roblox\FpsUnlocker"
+                        $exp = "C:\Users\$u\Desktop\VoltBlack"
+                        $json = [ordered]@{
+                            PlaceId                                    = '109983668079237'
+                            DelayOpen                                  = 9
+                            Sort                                       = $true
+                            Minimize                                   = $false
+                            'Exploit WorkSpace Folder'                 = $ws
+                            'Private Server'                           = $false
+                            'Change Account Bloxfruit'                 = $false
+                            'Total Instance'                           = 35
+                            'Display Username'                         = $true
+                            'Set Affinity'                             = $false
+                            'Restart Roblox Every [H]'                 = 30
+                            'Kill Process > Ram'                       = $false
+                            'Ram Usage (Each Process)'                 = 3
+                            'Change Account (Custom)'                  = $false
+                            'Check Banned Account and Change'          = $false
+                            'Startup With Windows'                     = $false
+                            'Affinity Core'                            = 2
+                            'Thread Check Cookie'                      = 100
+                            'Fps Unlocker Folder'                      = $fps
+                            'Delay Prevent Same Account'               = 10
+                            'Auto Detect/Run Update.exe'               = $true
+                            'Webhook Url'                              = ''
+                            'Webhook Delay Send [M]'                   = 5
+                            'Change Account Pet99'                     = $false
+                            'Custom Exploit Folder'                    = $exp
+                            'Delay Minimize'                           = 1
+                            'Mute Sounds'                              = $true
+                            'Windows Per Rows'                         = 10
+                            'Fixed Size'                               = '85x85'
+                            'Old Sort'                                 = $false
+                            'Use With RobloxAccManager'                = $false
+                            'Run Multi PlaceId'                        = $false
+                            'Low Server'                               = $false
+                            'Enable Multi Instances'                   = $true
+                            'Check More Infor When Change Acc Bloxfruit' = $false
+                            'Delete the account after changing the account' = $false
+                            'Close Roblox (Captcha)'                   = $false
+                            'Threading Delay'                          = 30
+                            'Close Roblox (Captcha) Delay'             = 1
+                            'Custom ApiKey'                            = ''
+                            'Hourly Change Account'                    = $false
+                            'Hourly Change Account [H]'                = 5
+                            'Change Account (Captcha)'                 = $false
+                            'Custom ApiURL'                            = ''
+                            'Suspend Roblox After Launch'              = $false
+                            'Suspend Roblox After Launch [s]'          = 5
+                            'Set Priority Low'                         = $false
+                            'Disable Kill Suspended Roblox'            = $false
+                            'Kill Seliware Error Message'              = $false
+                            'Solve Captcha'                            = $true
+                            'Yescaptcha Key'                           = ''
+                            'Omocaptcha Key'                           = 'OMO_74YKPZYVGDTNOW6SO2M5W0VWDZJC6CPM7YS6HBNZKFLWNYGZ3WZKFPK8J9UVHC1769261745'
+                            'Change Account When Captcha Unsolved'     = $false
+                            'Limit Solve Captcha Calls'                = $false
+                            'Solve Pow Only'                           = $false
+                            'Auto Delete Temp'                         = $true
+                            'Check Captcha Before Teleport'            = $false
+                            'Skip Solve Captcha In Browser'            = $true
+                        }
+                        New-Item -ItemType Directory -Force -Path $d | Out-Null
+                        $json | ConvertTo-Json | Set-Content -Path $p -Encoding UTF8
+                        wLog "config.json aplicado para: $u" 'OK'
+                        Start-Sleep 1
+                        AbrirWebRB
+                        SendAck $cmd $true
+                    } catch { wLog "Erro ao aplicar config: $_" 'ERROR'; SendAck $cmd $false "$_" }
                 }
                 'clear_cookies'    {
                     $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
