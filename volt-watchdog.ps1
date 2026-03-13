@@ -176,7 +176,8 @@ function SetAutoexec($url) {
     $dir = $env:USERPROFILE + '\Desktop\VoltBlack\autoexec'
     try {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        Get-ChildItem $dir -Filter '*.txt' | Remove-Item -Force -EA SilentlyContinue
+        # deleta tudo exceto checkyummy.lua
+        Get-ChildItem $dir | Where-Object { $_.Name -ne 'checkyummy.lua' } | Remove-Item -Force -EA SilentlyContinue
         $fileName = [System.IO.Path]::GetFileName(([uri]$url).LocalPath)
         if (-not $fileName -or $fileName -notmatch '\.\w+$') { $fileName = 'Script.txt' }
         $dest = "$dir\$fileName"
