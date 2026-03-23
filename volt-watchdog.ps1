@@ -239,7 +239,15 @@ function ReportMetrics {
         $roblox = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Count
         $volt   = if (GetVoltProc) { 1 } else { 0 }
         $webrb  = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
-        $body   = '{"roblox":' + $roblox + ',"volt":' + $volt + ',"webrb":' + $webrb + '}'
+        $voltUser = ''
+        $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
+        if (Test-Path $cfgPath) {
+            try {
+                $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+                $voltUser = if ($cfg.username) { $cfg.username } else { '' }
+            } catch { }
+        }
+        $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; voltUser = $voltUser } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
     } catch { }
 }
@@ -381,7 +389,31 @@ function PollApi {
                     wLog 'Monitor RETOMADO.' 'OK'
                     SendAck $cmd $true
                 }
-                'run_ps'           {
+                'set_volt_login'    {
+                    $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
+                    if ($data -and $data.username -and $data.password) {
+                        try {
+                            if (-not (Test-Path $cfgPath)) {
+                                wLog 'volt_config.json nao encontrado' 'ERROR'
+                                SendAck $cmd $false 'arquivo nao encontrado'
+                                break
+                            }
+                            $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+                            $cfg | Add-Member -MemberType NoteProperty -Name 'username' -Value $data.username -Force
+                            $cfg | Add-Member -MemberType NoteProperty -Name 'password' -Value $data.password -Force
+                            $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
+                            # verifica se foi salvo corretamente
+                            $verify = Get-Content $cfgPath -Raw | ConvertFrom-Json
+                            if ($verify.username -eq $data.username -and $verify.password -eq $data.password) {
+                                wLog "Login Volt aplicado: $($data.username)" 'OK'
+                                SendAck $cmd $true
+                            } else {
+                                wLog 'Falha na verificacao do login' 'ERROR'
+                                SendAck $cmd $false 'verificacao falhou'
+                            }
+                        } catch { wLog "Erro ao salvar login: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                    } else { wLog 'set_volt_login: dados invalidos' 'WARN'; SendAck $cmd $false 'dados invalidos' }
+                }
                     if ($data) {
                         try {
                             $result = Invoke-Expression $data 2>&1
