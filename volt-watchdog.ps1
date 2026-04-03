@@ -244,12 +244,21 @@ function ReportMetrics {
         if (Test-Path $cfgPath) {
             try { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json; $voltUser = if ($cfg.username) { $cfg.username } else { '' } } catch { }
         }
-        # CPU usage (avg over 1 sample)
-        $cpu = [Math]::Round((Get-CimInstance -ClassName Win32_Processor -EA SilentlyContinue | Measure-Object -Property LoadPercentage -Average).Average, 1)
-        # RAM
+        # CPU — Get-Counter leva 1s mas roda em job para nao bloquear o loop
+        $cpuJob = Start-Job { (Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 1 -EA SilentlyContinue).CounterSamples.CookedValue }
+        $cpuJob | Wait-Job -Timeout 3 | Out-Null
+        $cpuRaw = Receive-Job $cpuJob -EA SilentlyContinue
+        Remove-Job $cpuJob -Force -EA SilentlyContinue
+        $cpu = if ($cpuRaw) { [Math]::Round([double]$cpuRaw, 1) } else { 0 }
+        # RAM — igual ao gerenciador de tarefas: Em uso = Total - Disponivel (standby+livre)
         $os = Get-CimInstance -ClassName Win32_OperatingSystem -EA SilentlyContinue
-        $ramUsed  = if ($os) { [Math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 1) } else { 0 }
-        $ramTotal = if ($os) { [Math]::Round($os.TotalVisibleMemorySize / 1MB, 1) } else { 0 }
+        if ($os) {
+            $totalMB    = $os.TotalVisibleMemorySize / 1KB   # converter KB -> MB
+            $availMB    = $os.FreePhysicalMemory    / 1KB
+            $usedMB     = $totalMB - $availMB
+            $ramUsed    = [Math]::Round($usedMB  / 1024, 2)  # GB
+            $ramTotal   = [Math]::Round($totalMB / 1024, 2)  # GB
+        } else { $ramUsed = 0; $ramTotal = 0 }
         $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; voltUser = $voltUser; cpu = $cpu; ramUsed = $ramUsed; ramTotal = $ramTotal } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
     } catch { }
