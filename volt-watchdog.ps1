@@ -52,6 +52,8 @@ $script:Paused  = $false
 $script:CurHash = $null
 
 # ── Log ─────────────────────────────────────────────────────────
+$script:LogBuffer = [System.Collections.Generic.List[hashtable]]::new()
+
 function wLog($m, $l = 'INFO') {
     $time = Get-Date -f 'HH:mm:ss'
     $s    = '[' + (Get-Date -f 'yyyy-MM-dd HH:mm:ss') + '][' + $l + '] ' + $m
@@ -67,6 +69,9 @@ function wLog($m, $l = 'INFO') {
     Add-Content $LogFile $s -Encoding UTF8
     $lines = Get-Content $LogFile -EA SilentlyContinue
     if ($lines.Count -gt 500) { $lines | Select-Object -Last 250 | Set-Content $LogFile -Encoding UTF8 }
+    # buffer para envio ao servidor
+    $script:LogBuffer.Add(@{ t = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); l = $l; m = $m })
+    if ($script:LogBuffer.Count -gt 100) { $script:LogBuffer.RemoveAt(0) }
 }
 function Separador { Write-Host ('  ' + ('-' * 60)) -ForegroundColor DarkGray }
 
@@ -261,6 +266,13 @@ function ReportMetrics {
         } else { $ramUsed = 0; $ramTotal = 0 }
         $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; voltUser = $voltUser; cpu = $cpu; ramUsed = $ramUsed; ramTotal = $ramTotal } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
+        # flush log buffer
+        if ($script:LogBuffer.Count -gt 0) {
+            $toSend = $script:LogBuffer.ToArray()
+            $script:LogBuffer.Clear()
+            $logBody = @{ entries = $toSend } | ConvertTo-Json -Compress -Depth 5
+            Invoke-RestMethod -Uri "$ApiUrl/devicelog/$MachineId" -Method POST -Headers $ApiHeaders -Body $logBody -ContentType 'application/json' -TimeoutSec 5 -EA SilentlyContinue | Out-Null
+        }
     } catch { }
 }
 
