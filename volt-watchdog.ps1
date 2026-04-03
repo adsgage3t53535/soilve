@@ -23,6 +23,7 @@ public class WinAPI {
 $VoltExe     = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.6.exe"
 $VoltProc    = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
 
+# Helper: encontra processo do VoltPro pelo caminho do exe
 function GetVoltProc {
     Get-Process -EA SilentlyContinue | Where-Object {
         try { $_.Path -eq $VoltExe } catch { $false }
@@ -40,6 +41,7 @@ $WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
 $WebRBExe    = 'webrb.exe'
 $ErrorTitles = @('Error','Roblox Error','Crash','Disconnected','An error occurred','Notice')
 
+# MachineId via auth.json (Note field)
 $_authFile = "$WebRBDir\auth.json"
 $MachineId = try {
     $j = Get-Content $_authFile -Raw -EA Stop | ConvertFrom-Json
@@ -124,6 +126,7 @@ function FecharWebRB {
     'webrb','WebRB','YummyWebPlayer','yummy' | ForEach-Object {
         Get-Process -Name $_ -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
     }
+    # Kill by window title containing Yummy
     Get-Process -EA SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*Yummy*' -or $_.MainWindowTitle -like '*WebRB*' } | Stop-Process -Force -EA SilentlyContinue
 }
 
@@ -137,18 +140,21 @@ function FecharTodosRoblox {
     Get-Process -Name 'RobloxCrashHandler' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 }
 
+# ── Fechar tudo ──────────────────────────────────────────────────
 function FecharTudo {
     FecharTodosRoblox
     FecharVolt
     FecharWebRB
 }
 
+# ── Reiniciar tudo ───────────────────────────────────────────────
 function ReiniciarTudo {
     Separador
     wLog 'REINICIANDO TUDO...' 'WARN'
     FecharTodosRoblox
     FecharVolt
     FecharWebRB
+    # Limpa workspace do Volt
     $wsDir = $env:USERPROFILE + '\Desktop\VoltBlack\workspace'
     if (Test-Path $wsDir) {
         Get-ChildItem $wsDir -Recurse | Remove-Item -Force -Recurse -EA SilentlyContinue
@@ -170,6 +176,7 @@ function SetAutoexec($url) {
     $dir = $env:USERPROFILE + '\Desktop\VoltBlack\autoexec'
     try {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        # deleta tudo exceto checkyummy.lua
         Get-ChildItem $dir | Where-Object { $_.Name -ne 'checkyummy.lua' } | Remove-Item -Force -EA SilentlyContinue
         $fileName = [System.IO.Path]::GetFileName(([uri]$url).LocalPath)
         if (-not $fileName -or $fileName -notmatch '\.\w+$') { $fileName = 'Script.txt' }
@@ -232,46 +239,18 @@ function ReportMetrics {
         $roblox = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Count
         $volt   = if (GetVoltProc) { 1 } else { 0 }
         $webrb  = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
-
-        # CPU
-        $cpu = try {
-            [Math]::Round((Get-CimInstance Win32_Processor -EA Stop |
-                Measure-Object -Property LoadPercentage -Average).Average, 1)
-        } catch { 0 }
-
-        # RAM
-        $ram = try {
-            $os = Get-CimInstance Win32_OperatingSystem -EA Stop
-            [Math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) /
-                $os.TotalVisibleMemorySize) * 100, 1)
-        } catch { 0 }
-
-        # Contagem de cookies (= maximo de Roblox possivel)
-        $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
-        $cookieCount = 0
-        if (Test-Path $cookiePath) {
-            $cookieCount = @(Get-Content $cookiePath -EA SilentlyContinue |
-                Where-Object { $_.Trim() -ne '' }).Count
-        }
-
         $voltUser = ''
         $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
         if (Test-Path $cfgPath) {
-            try {
-                $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-                $voltUser = if ($cfg.username) { $cfg.username } else { '' }
-            } catch { }
+            try { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json; $voltUser = if ($cfg.username) { $cfg.username } else { '' } } catch { }
         }
-
-        $body = @{
-            roblox      = $roblox
-            volt        = $volt
-            webrb       = $webrb
-            voltUser    = $voltUser
-            cpu         = $cpu
-            ram         = $ram
-            cookieCount = $cookieCount
-        } | ConvertTo-Json -Compress
+        # CPU usage (avg over 1 sample)
+        $cpu = [Math]::Round((Get-CimInstance -ClassName Win32_Processor -EA SilentlyContinue | Measure-Object -Property LoadPercentage -Average).Average, 1)
+        # RAM
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -EA SilentlyContinue
+        $ramUsed  = if ($os) { [Math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 1) } else { 0 }
+        $ramTotal = if ($os) { [Math]::Round($os.TotalVisibleMemorySize / 1MB, 1) } else { 0 }
+        $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; voltUser = $voltUser; cpu = $cpu; ramUsed = $ramUsed; ramTotal = $ramTotal } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
     } catch { }
 }
@@ -348,12 +327,14 @@ function PollApi {
                     $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
                     if ($data) {
                         try {
+                            # preserva password e username do arquivo existente
                             $keep = @{ password = $null; username = $null }
                             if (Test-Path $cfgPath) {
                                 $cur = Get-Content $cfgPath -Raw | ConvertFrom-Json
                                 $keep.password = $cur.password
                                 $keep.username  = $cur.username
                             }
+                            # converte data para PSObject e injeta as credenciais preservadas
                             $obj = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
                             if ($keep.password) { $obj | Add-Member -MemberType NoteProperty -Name 'password' -Value $keep.password -Force }
                             if ($keep.username)  { $obj | Add-Member -MemberType NoteProperty -Name 'username'  -Value $keep.username  -Force }
@@ -369,6 +350,7 @@ function PollApi {
                         try {
                             $dir = Split-Path $cfgPath
                             if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+                            # converte para JSON string, substitui qualquer C:\Users\QUALQUER\ pelo usuario correto
                             $json = $data | ConvertTo-Json -Depth 10
                             $json = $json -replace 'C:\\\\Users\\\\[^\\\\]+\\\\', "C:\\\\Users\\\\$($env:USERNAME)\\\\"
                             $json | Set-Content -Path $cfgPath -Encoding UTF8
@@ -423,6 +405,7 @@ function PollApi {
                             $cfg | Add-Member -MemberType NoteProperty -Name 'username' -Value $data.username -Force
                             $cfg | Add-Member -MemberType NoteProperty -Name 'password' -Value $data.password -Force
                             $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
+                            # verifica se foi salvo corretamente
                             $verify = Get-Content $cfgPath -Raw | ConvertFrom-Json
                             if ($verify.username -eq $data.username -and $verify.password -eq $data.password) {
                                 wLog "Login Volt aplicado: $($data.username)" 'OK'
@@ -434,6 +417,23 @@ function PollApi {
                         } catch { wLog "Erro ao salvar login: $_" 'ERROR'; SendAck $cmd $false "$_" }
                     } else { wLog 'set_volt_login: dados invalidos' 'WARN'; SendAck $cmd $false 'dados invalidos' }
                 }
+                'screenshot'       {
+                    try {
+                        Add-Type -AssemblyName System.Windows.Forms,System.Drawing -EA Stop
+                        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                        $bmp    = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+                        $gfx    = [System.Drawing.Graphics]::FromImage($bmp)
+                        $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+                        $ms     = New-Object System.IO.MemoryStream
+                        $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+                        $b64    = [Convert]::ToBase64String($ms.ToArray())
+                        $gfx.Dispose(); $bmp.Dispose(); $ms.Dispose()
+                        $ssBody = @{ image = $b64 } | ConvertTo-Json -Compress
+                        Invoke-RestMethod -Uri "$ApiUrl/screenshot/$MachineId" -Method POST -Headers $ApiHeaders -Body $ssBody -ContentType 'application/json' -TimeoutSec 30 -EA Stop | Out-Null
+                        wLog 'Screenshot enviado' 'OK'
+                        SendAck $cmd $true
+                    } catch { wLog "Erro screenshot: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                }
                 'run_ps'           {
                     if ($data) {
                         try {
@@ -443,32 +443,6 @@ function PollApi {
                             SendAck $cmd $true
                         } catch { wLog "run_ps ERRO: $_" 'ERROR'; SendAck $cmd $false "$_" }
                     } else { wLog 'run_ps: script vazio' 'WARN'; SendAck $cmd $false 'script vazio' }
-                }
-                'take_screenshot'  {
-                    try {
-                        Add-Type -AssemblyName System.Windows.Forms -EA Stop
-                        Add-Type -AssemblyName System.Drawing -EA Stop
-                        $screen  = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                        $bitmap  = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
-                        $g       = [System.Drawing.Graphics]::FromImage($bitmap)
-                        $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-                        $ms      = New-Object System.IO.MemoryStream
-                        $encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
-                                   Where-Object { $_.MimeType -eq 'image/jpeg' } |
-                                   Select-Object -First 1
-                        $encPrm  = New-Object System.Drawing.Imaging.EncoderParameters(1)
-                        $encPrm.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
-                            [System.Drawing.Imaging.Encoder]::Quality, 55L)
-                        $bitmap.Save($ms, $encoder, $encPrm)
-                        $g.Dispose(); $bitmap.Dispose()
-                        $b64  = [Convert]::ToBase64String($ms.ToArray()); $ms.Dispose()
-                        $body = '{"data":"data:image/jpeg;base64,' + $b64 + '"}'
-                        Invoke-RestMethod -Uri "$ApiUrl/screenshot/$MachineId" -Method POST `
-                            -Headers $ApiHeaders -Body $body -ContentType 'application/json' `
-                            -TimeoutSec 30 -EA Stop | Out-Null
-                        wLog 'Screenshot enviado' 'OK'
-                        SendAck $cmd $true
-                    } catch { wLog "Erro screenshot: $_" 'ERROR'; SendAck $cmd $false "$_" }
                 }
                 default { wLog "Comando desconhecido: $cmd" 'WARN'; SendAck $cmd $false 'desconhecido' }
             }
