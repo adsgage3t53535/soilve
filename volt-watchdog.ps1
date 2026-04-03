@@ -280,30 +280,33 @@ function CheckUpdate {
 
 # ── Reportar metricas ao servidor ───────────────────────────────
 # ── Métricas de sistema em background (CPU/RAM a cada 30s) ───────
-$script:CpuVal    = 0
-$script:RamUsed   = 0
-$script:RamTotal  = 0
+$shared = [ref]@{ cpu = 0; ramUsed = 0; ramTotal = 0 }
 
 $metricsScript = {
     param($sharedRef)
     while ($true) {
         try {
-            $cpu = (Get-Counter '\Processor Information(_Total)\% Processor Utility' -EA SilentlyContinue).CounterSamples.CookedValue
-            $cpu = [Math]::Round($cpu, 1)
-            $os  = Get-CimInstance Win32_OperatingSystem -EA SilentlyContinue
-            if ($os) {
-                $total = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
-                $free  = [Math]::Round($os.FreePhysicalMemory     / 1MB, 2)
-                $used  = [Math]::Round($total - $free, 2)
-                $sharedRef.Value = @{ cpu = $cpu; ramUsed = $used; ramTotal = $total }
-            }
+            # CPU — dois snapshots com 1s de diferença (metodo preciso, igual gerenciador de tarefas)
+            $s1 = Get-CimInstance -Query "select PercentIdleTime, Timestamp_Sys100NS from Win32_PerfRawData_PerfOS_Processor where Name='_Total'" -EA Stop
+            Start-Sleep -Milliseconds 1000
+            $s2 = Get-CimInstance -Query "select PercentIdleTime, Timestamp_Sys100NS from Win32_PerfRawData_PerfOS_Processor where Name='_Total'" -EA Stop
+            $idleDelta = $s2.PercentIdleTime    - $s1.PercentIdleTime
+            $timeDelta = $s2.Timestamp_Sys100NS - $s1.Timestamp_Sys100NS
+            $idle = if ($timeDelta -gt 0) { $idleDelta / $timeDelta * 100 } else { 100 }
+            $cpu  = [Math]::Round(100 - $idle, 1)
+            if ($cpu -lt 0) { $cpu = 0 }
+            # RAM
+            $os = Get-CimInstance Win32_OperatingSystem -EA Stop
+            $total = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
+            $free  = [Math]::Round($os.FreePhysicalMemory     / 1MB, 2)
+            $used  = [Math]::Round($total - $free, 2)
+            $sharedRef.Value = @{ cpu = $cpu; ramUsed = $used; ramTotal = $total }
         } catch {}
-        Start-Sleep -Seconds 30
+        Start-Sleep -Seconds 29   # 1s ja foi gasto nos snapshots
     }
 }
 
-# Usa RunspacePool para compartilhar valores com o thread principal
-$shared = [ref]@{ cpu = 0; ramUsed = 0; ramTotal = 0 }
+# Runspace para nao bloquear o loop principal
 $rs = [RunspaceFactory]::CreateRunspace()
 $rs.Open()
 $rs.SessionStateProxy.SetVariable('sharedRef', $shared)
