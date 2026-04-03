@@ -220,6 +220,46 @@ function CheckAndKillErrors {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
+# ── Detector de NOTICE (VoltPro) ─────────────────────────────────
+function CheckNotice {
+    $found = $false
+    $voltProc = GetVoltProc
+    if (-not $voltProc) { $script:NoticeCount = 0; return }
+    # verifica janelas do VoltPro e de todos os processos filhos procurando "Notice"
+    $allPids = @($voltProc.Id)
+    try { $allPids += (Get-Process -EA SilentlyContinue | Where-Object { $_.Parent.Id -eq $voltProc.Id }).Id } catch {}
+    $callback2 = [WinAPI+EnumWindowsProc]{
+        param($hwnd, $lp)
+        if ([WinAPI]::IsWindowVisible($hwnd)) {
+            $pid2 = 0
+            [WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid2) | Out-Null
+            if ($allPids -contains $pid2) {
+                $sb2 = New-Object System.Text.StringBuilder 256
+                [WinAPI]::GetWindowText($hwnd, $sb2, 256) | Out-Null
+                $t2 = $sb2.ToString()
+                if ($t2 -match 'Notice|NOTICE') {
+                    $script:found_notice = $true
+                    [WinAPI]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+                }
+            }
+        }
+        return $true
+    }
+    $script:found_notice = $false
+    [WinAPI]::EnumWindows($callback2, [IntPtr]::Zero) | Out-Null
+    if ($script:found_notice) {
+        $script:NoticeCount++
+        wLog "NOTICE detectado ($($script:NoticeCount)x)" 'WARN'
+        if ($script:NoticeCount -ge 2) {
+            wLog 'NOTICE 2x consecutivo — Reiniciando VoltPro...' 'ERROR'
+            $script:NoticeCount = 0
+            try { ReiniciarVolt } catch { wLog "Erro ao reiniciar Volt apos NOTICE: $_" 'ERROR' }
+        }
+    } else {
+        $script:NoticeCount = 0
+    }
+}
+
 # ── Auto-update ──────────────────────────────────────────────────
 function CheckUpdate {
     try {
@@ -239,6 +279,39 @@ function CheckUpdate {
 }
 
 # ── Reportar metricas ao servidor ───────────────────────────────
+# ── Métricas de sistema em background (CPU/RAM a cada 30s) ───────
+$script:CpuVal    = 0
+$script:RamUsed   = 0
+$script:RamTotal  = 0
+
+$metricsScript = {
+    param($sharedRef)
+    while ($true) {
+        try {
+            $cpu = (Get-Counter '\Processor Information(_Total)\% Processor Utility' -EA SilentlyContinue).CounterSamples.CookedValue
+            $cpu = [Math]::Round($cpu, 1)
+            $os  = Get-CimInstance Win32_OperatingSystem -EA SilentlyContinue
+            if ($os) {
+                $total = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
+                $free  = [Math]::Round($os.FreePhysicalMemory     / 1MB, 2)
+                $used  = [Math]::Round($total - $free, 2)
+                $sharedRef.Value = @{ cpu = $cpu; ramUsed = $used; ramTotal = $total }
+            }
+        } catch {}
+        Start-Sleep -Seconds 30
+    }
+}
+
+# Usa RunspacePool para compartilhar valores com o thread principal
+$shared = [ref]@{ cpu = 0; ramUsed = 0; ramTotal = 0 }
+$rs = [RunspaceFactory]::CreateRunspace()
+$rs.Open()
+$rs.SessionStateProxy.SetVariable('sharedRef', $shared)
+$ps = [PowerShell]::Create()
+$ps.Runspace = $rs
+$ps.AddScript($metricsScript).AddArgument($shared) | Out-Null
+$ps.BeginInvoke() | Out-Null
+
 function ReportMetrics {
     try {
         $roblox = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Count
@@ -249,21 +322,11 @@ function ReportMetrics {
         if (Test-Path $cfgPath) {
             try { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json; $voltUser = if ($cfg.username) { $cfg.username } else { '' } } catch { }
         }
-        # CPU — Get-Counter leva 1s mas roda em job para nao bloquear o loop
-        $cpuJob = Start-Job { (Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 1 -EA SilentlyContinue).CounterSamples.CookedValue }
-        $cpuJob | Wait-Job -Timeout 3 | Out-Null
-        $cpuRaw = Receive-Job $cpuJob -EA SilentlyContinue
-        Remove-Job $cpuJob -Force -EA SilentlyContinue
-        $cpu = if ($cpuRaw) { [Math]::Round([double]$cpuRaw, 1) } else { 0 }
-        # RAM — igual ao gerenciador de tarefas: Em uso = Total - Disponivel (standby+livre)
-        $os = Get-CimInstance -ClassName Win32_OperatingSystem -EA SilentlyContinue
-        if ($os) {
-            $totalMB    = $os.TotalVisibleMemorySize / 1KB   # converter KB -> MB
-            $availMB    = $os.FreePhysicalMemory    / 1KB
-            $usedMB     = $totalMB - $availMB
-            $ramUsed    = [Math]::Round($usedMB  / 1024, 2)  # GB
-            $ramTotal   = [Math]::Round($totalMB / 1024, 2)  # GB
-        } else { $ramUsed = 0; $ramTotal = 0 }
+        # lê métricas coletadas pelo thread background
+        $m        = $shared.Value
+        $cpu      = if ($m.cpu)      { $m.cpu }      else { 0 }
+        $ramUsed  = if ($m.ramUsed)  { $m.ramUsed }  else { 0 }
+        $ramTotal = if ($m.ramTotal) { $m.ramTotal }  else { 0 }
         $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; voltUser = $voltUser; cpu = $cpu; ramUsed = $ramUsed; ramTotal = $ramTotal } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
         # flush log buffer
@@ -286,6 +349,7 @@ function SendAck($cmd, $success, $errMsg) {
 }
 
 $script:PollFailCount = 0
+$script:NoticeCount   = 0   # contador consecutivo de NOTICE detectado
 
 # ── Poll API ─────────────────────────────────────────────────────
 function PollApi {
@@ -502,6 +566,7 @@ while ($true) {
 
     PollApi
     if ($tick % 5  -eq 0) { ReportMetrics }
+    if ($tick % 5  -eq 0) { CheckNotice }
     if ($tick % 60 -eq 0) { CheckUpdate }
     CheckAndKillErrors
 
