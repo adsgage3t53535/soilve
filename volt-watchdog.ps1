@@ -463,231 +463,222 @@ function ReportMetrics {
     } catch { }
 }
 
-# ── ACK helper ───────────────────────────────────────────────────
-function SendAck($cmd, $success, $errMsg) {
-    try {
-        $b = if ($errMsg) { @{ cmd = $cmd; success = $false; error = $errMsg } } else { @{ cmd = $cmd; success = [bool]$success } }
-        $body = $b | ConvertTo-Json -Compress
-        Invoke-RestMethod -Uri "$ApiUrl/ack/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
-    } catch { }
-}
 
-$script:PollFailCount  = 0
-$script:NoticeCount    = 0
-$script:LastReportSig  = ''   # signature do ultimo report enviado
-$script:ForceReportIn  = 0    # forca envio a cada 60 ciclos mesmo sem mudanca
-$script:LastReport     = 0    # timestamp do ultimo ReportMetrics
-$script:LastNotice     = 0    # timestamp do ultimo CheckNotice
-$script:LastUpdate     = 0    # timestamp do ultimo CheckUpdate
-$script:LastOrg        = 0    # timestamp do ultimo OrganizarJanela
-$script:LastVoltCheck  = 0    # timestamp do ultimo check do VoltPro
+# SendAck agora via ackQueue (definida no bloco do runspace de poll abaixo)
 
-# ── Poll API ─────────────────────────────────────────────────────
-function PollApi {
-    try {
-        $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -Headers $ApiHeaders -TimeoutSec 15 -EA Stop
-        if ($script:PollFailCount -gt 0) {
-            wLog "Conexao restaurada apos $($script:PollFailCount) falhas." 'OK'
-            $script:PollFailCount = 0
+# ── Poll em runspace separado — nao bloqueia o loop principal ────
+# Fila thread-safe: runspace deposita comandos, loop principal consome
+$cmdQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
+# Fila de ACKs: loop principal deposita, runspace envia ao servidor
+$ackQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
+$pollStop = [ref]$false
+
+$pollScript = {
+    param($apiUrl, $machineId, $apiKey, $cmdQueue, $ackQueue, $pollStop)
+    $headers   = @{ 'X-Api-Key' = $apiKey }
+    $failCount = 0
+    while (-not $pollStop.Value) {
+        # Envia ACKs pendentes primeiro
+        $ackItem = $null
+        while ($ackQueue.TryDequeue([ref]$ackItem)) {
+            try {
+                $body = $ackItem | ConvertTo-Json -Compress
+                Invoke-RestMethod -Uri "$apiUrl/ack/$machineId" -Method POST -Headers $headers `
+                    -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
+            } catch {}
         }
-        foreach ($item in $r.commands) {
-            if ($item -is [string]) { $cmd = $item; $data = $null }
-            else                    { $cmd = $item.cmd; $data = $item.data }
-            switch ($cmd) {
-                'open_volt'        { try { AbrirVolt;         SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'close_volt'       { try { FecharVolt;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'restart_volt'     { try { ReiniciarVolt;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'open_webrb'       { try { AbrirWebRB;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'close_webrb'      { try { FecharWebRB;       SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'close_all_roblox' { try { FecharTodosRoblox; SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'restart_all'      { try { ReiniciarTudo;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'organize_windows' { try { OrganizarJanela;   SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'minimize_roblox'  { try { MinimizarRoblox;   SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-
-                # ── FarmSync ──────────────────────────────────────
-                'open_farmsync'    { try { AbrirFarmSync;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'close_farmsync'   { try { FecharFarmSync;    SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'restart_farmsync' { try { ReiniciarFarmSync; SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'set_farmsync_key' {
-                    if ($data) {
-                        try {
-                            $ok = SetFarmSyncKey $data
-                            if ($ok) { SendAck $cmd $true } else { SendAck $cmd $false 'key invalida' }
-                        } catch { SendAck $cmd $false "$_" }
-                    } else { wLog 'set_farmsync_key: key vazia' 'WARN'; SendAck $cmd $false 'key vazia' }
-                }
-
-                'restart_cmd'      {
-                    SendAck $cmd $true
-                    wLog 'Reiniciando CMD...' 'WARN'
-                    try {
-                        $raw2 = (Invoke-WebRequest -Uri $GithubUrl -UseBasicParsing -TimeoutSec 10 -EA Stop).Content
-                        $tmpPath2 = "$env:TEMP\monitor_update.ps1"
-                        [System.IO.File]::WriteAllText($tmpPath2, $raw2, [System.Text.UTF8Encoding]::new($false))
-                        $selfPid2 = $PID
-                        $launcher2 = "Start-Sleep 3; Stop-Process -Id $selfPid2 -Force -EA SilentlyContinue; & '$tmpPath2'"
-                        Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher2`"" -WindowStyle Normal
-                    } catch {
-                        # fallback se nao conseguir baixar
-                        $selfPid2 = $PID
-                        $launcher2 = "Start-Sleep 3; Stop-Process -Id $selfPid2 -Force -EA SilentlyContinue; iex (irm '$GithubUrl')"
-                        Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher2`"" -WindowStyle Normal
-                    }
-                    exit
-                }
-                'set_autoexec'     {
-                    if ($data) {
-                        try { SetAutoexec $data; SendAck $cmd $true }
-                        catch { SendAck $cmd $false "$_" }
-                    } else { wLog 'set_autoexec: URL vazia' 'WARN'; SendAck $cmd $false 'URL vazia' }
-                }
-                'set_cookies'      {
-                    $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
-                    if ($data) {
-                        try {
-                            $lista  = $data | Where-Object { $_ -ne $null -and $_.Trim() -ne '' }
-                            $unicos = $lista | Select-Object -Unique
-                            [System.IO.File]::WriteAllLines($cookiePath, $unicos, [System.Text.UTF8Encoding]::new($false))
-                            wLog "Cookies gravados: $($unicos.Count) linhas" 'OK'
-                            SendAck $cmd $true
-                        } catch { wLog "Erro ao gravar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                    } else { wLog 'set_cookies: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
-                }
-                'clear_switched'   {
-                    $swDir = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\switched"
-                    try {
-                        if (Test-Path $swDir) {
-                            $files = Get-ChildItem $swDir -Filter '*.txt' -EA SilentlyContinue
-                            $files | Remove-Item -Force -EA SilentlyContinue
-                            wLog "Pasta switched limpa: $($files.Count) arquivo(s) removido(s)" 'OK'
-                        } else { wLog 'Pasta switched nao encontrada' 'WARN' }
-                        SendAck $cmd $true
-                    } catch { wLog "Erro ao limpar switched: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                }
-                'apply_volt_config' {
-                    $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
-                    if ($data) {
-                        try {
-                            $keep = @{ password = $null; username = $null }
-                            if (Test-Path $cfgPath) {
-                                $cur = Get-Content $cfgPath -Raw | ConvertFrom-Json
-                                $keep.password = $cur.password
-                                $keep.username  = $cur.username
-                            }
-                            $obj = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
-                            if ($keep.password) { $obj | Add-Member -MemberType NoteProperty -Name 'password' -Value $keep.password -Force }
-                            if ($keep.username)  { $obj | Add-Member -MemberType NoteProperty -Name 'username'  -Value $keep.username  -Force }
-                            $obj | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
-                            wLog 'volt_config.json atualizado' 'OK'
-                            SendAck $cmd $true
-                        } catch { wLog "Erro ao gravar volt_config: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                    } else { wLog 'apply_volt_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
-                }
-                'apply_webrb_config' {
-                    $cfgPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\config.json"
-                    if ($data) {
-                        try {
-                            $dir = Split-Path $cfgPath
-                            if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-                            $json = $data | ConvertTo-Json -Depth 10
-                            $json = $json -replace 'C:\\\\Users\\\\[^\\\\]+\\\\', "C:\\\\Users\\\\$($env:USERNAME)\\\\"
-                            $json | Set-Content -Path $cfgPath -Encoding UTF8
-                            wLog "config.json (WebRB) atualizado com caminhos de: $($env:USERNAME)" 'OK'
-                            SendAck $cmd $true
-                        } catch { wLog "Erro ao gravar config.json: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                    } else { wLog 'apply_webrb_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
-                }
-                'clear_cookies'    {
-                    $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
-                    try {
-                        [System.IO.File]::WriteAllText($cookiePath, '')
-                        wLog 'cookie.txt limpo' 'OK'
-                        SendAck $cmd $true
-                    } catch { wLog "Erro ao limpar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                }
-                'restart_pc'       {
-                    wLog 'Reiniciando PC...' 'WARN'
-                    try { FecharTudo } catch { wLog "Aviso ao fechar processos: $_" 'WARN' }
-                    Start-Sleep 2
-                    try {
-                        & cmd.exe /c "shutdown /r /t 3 /f" 2>&1 | Out-Null
-                        wLog 'Comando de reinicio enviado.' 'OK'
-                        SendAck $cmd $true
-                    } catch { wLog "Erro ao reiniciar: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                }
-                'pause' {
-                    $script:Paused = $true
-                    $host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'
-                    wLog 'Monitor PAUSADO.' 'WARN'
-                    SendAck $cmd $true
-                }
-                'resume' {
-                    $script:Paused = $false
-                    $host.UI.RawUI.WindowTitle = 'Monitor'
-                    wLog 'Monitor RETOMADO.' 'OK'
-                    SendAck $cmd $true
-                }
-                'set_volt_login'    {
-                    $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
-                    if ($data -and $data.username -and $data.password) {
-                        try {
-                            if (-not (Test-Path $cfgPath)) {
-                                wLog 'volt_config.json nao encontrado' 'ERROR'
-                                SendAck $cmd $false 'arquivo nao encontrado'
-                                break
-                            }
-                            $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-                            $cfg | Add-Member -MemberType NoteProperty -Name 'username' -Value $data.username -Force
-                            $cfg | Add-Member -MemberType NoteProperty -Name 'password' -Value $data.password -Force
-                            $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
-                            $verify = Get-Content $cfgPath -Raw | ConvertFrom-Json
-                            if ($verify.username -eq $data.username -and $verify.password -eq $data.password) {
-                                wLog "Login Volt aplicado: $($data.username)" 'OK'
-                                SendAck $cmd $true
-                            } else {
-                                wLog 'Falha na verificacao do login' 'ERROR'
-                                SendAck $cmd $false 'verificacao falhou'
-                            }
-                        } catch { wLog "Erro ao salvar login: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                    } else { wLog 'set_volt_login: dados invalidos' 'WARN'; SendAck $cmd $false 'dados invalidos' }
-                }
-                'screenshot'       {
-                    try {
-                        Add-Type -AssemblyName System.Windows.Forms,System.Drawing -EA Stop
-                        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                        $bmp    = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
-                        $gfx    = [System.Drawing.Graphics]::FromImage($bmp)
-                        $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-                        $ms     = New-Object System.IO.MemoryStream
-                        $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-                        $b64    = [Convert]::ToBase64String($ms.ToArray())
-                        $gfx.Dispose(); $bmp.Dispose(); $ms.Dispose()
-                        $ssBody = @{ image = $b64 } | ConvertTo-Json -Compress
-                        Invoke-RestMethod -Uri "$ApiUrl/screenshot/$MachineId" -Method POST -Headers $ApiHeaders -Body $ssBody -ContentType 'application/json' -TimeoutSec 30 -EA Stop | Out-Null
-                        wLog 'Screenshot enviado' 'OK'
-                        SendAck $cmd $true
-                    } catch { wLog "Erro screenshot: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                }
-                'run_ps'           {
-                    if ($data) {
-                        try {
-                            $result = Invoke-Expression $data 2>&1
-                            $out = if ($result) { ($result | Out-String).Trim() } else { '(sem saida)' }
-                            wLog "run_ps OK: $($out.Substring(0, [Math]::Min(200, $out.Length)))" 'OK'
-                            SendAck $cmd $true
-                        } catch { wLog "run_ps ERRO: $_" 'ERROR'; SendAck $cmd $false "$_" }
-                    } else { wLog 'run_ps: script vazio' 'WARN'; SendAck $cmd $false 'script vazio' }
-                }
-                default { wLog "Comando desconhecido: $cmd" 'WARN'; SendAck $cmd $false 'desconhecido' }
+        # Long-poll por comandos
+        try {
+            $r = Invoke-RestMethod -Uri "$apiUrl/poll/$machineId" -Method GET `
+                 -Headers $headers -TimeoutSec 15 -EA Stop
+            if ($failCount -gt 0) {
+                $cmdQueue.Enqueue(@{ _internal = 'restored'; failCount = $failCount })
+                $failCount = 0
             }
-        }
-    } catch {
-        $script:PollFailCount++
-        if ($script:PollFailCount -eq 1 -or $script:PollFailCount % 30 -eq 0) {
-            wLog "Falha ao conectar ao servidor ($($script:PollFailCount)x): $_" 'WARN'
+            foreach ($item in $r.commands) { $cmdQueue.Enqueue($item) }
+        } catch {
+            $failCount++
+            $cmdQueue.Enqueue(@{ _internal = 'fail'; count = $failCount; msg = "$_" })
+            Start-Sleep -Seconds 2
         }
     }
 }
+
+$rsPoll = [RunspaceFactory]::CreateRunspace(); $rsPoll.Open()
+$psPoll = [PowerShell]::Create()
+$psPoll.Runspace = $rsPoll
+$psPoll.AddScript($pollScript).AddArgument($ApiUrl).AddArgument($MachineId) `
+    .AddArgument($ApiKey).AddArgument($cmdQueue).AddArgument($ackQueue) `
+    .AddArgument($pollStop) | Out-Null
+$psPoll.BeginInvoke() | Out-Null
+
+function SendAck($cmd, $success, $errMsg) {
+    $b = if ($errMsg) { @{ cmd = $cmd; success = $false; error = $errMsg } } else { @{ cmd = $cmd; success = [bool]$success } }
+    $ackQueue.Enqueue($b)
+}
+
+function DrainCommands {
+    $item = $null
+    while ($cmdQueue.TryDequeue([ref]$item)) {
+        if ($item -is [hashtable] -and $item['_internal']) {
+            switch ($item['_internal']) {
+                'restored' { wLog "Conexao restaurada apos $($item.failCount) falhas." 'OK' }
+                'fail'     {
+                    $fc = $item.count
+                    if ($fc -eq 1 -or $fc % 10 -eq 0) {
+                        wLog "Falha ao conectar ao servidor ($($fc)x): $($item.msg)" 'WARN'
+                    }
+                }
+            }
+            continue
+        }
+        if ($item -is [string]) { $cmd = $item; $data = $null }
+        else                    { $cmd = $item.cmd; $data = $item.data }
+        switch ($cmd) {
+            'open_volt'          { try { AbrirVolt;         SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'close_volt'         { try { FecharVolt;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'restart_volt'       { try { ReiniciarVolt;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'open_webrb'         { try { AbrirWebRB;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'close_webrb'        { try { FecharWebRB;       SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'close_all_roblox'   { try { FecharTodosRoblox; SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'restart_all'        { try { ReiniciarTudo;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'organize_windows'   { try { OrganizarJanela;   SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'minimize_roblox'    { try { MinimizarRoblox;   SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'open_farmsync'      { try { AbrirFarmSync;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'close_farmsync'     { try { FecharFarmSync;    SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'restart_farmsync'   { try { ReiniciarFarmSync; SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+            'set_farmsync_key' {
+                if ($data) {
+                    try { $ok = SetFarmSyncKey $data; if ($ok) { SendAck $cmd $true } else { SendAck $cmd $false 'key invalida' } }
+                    catch { SendAck $cmd $false "$_" }
+                } else { wLog 'set_farmsync_key: key vazia' 'WARN'; SendAck $cmd $false 'key vazia' }
+            }
+            'restart_cmd' {
+                SendAck $cmd $true; wLog 'Reiniciando CMD...' 'WARN'
+                try {
+                    $raw2 = (Invoke-WebRequest -Uri $GithubUrl -UseBasicParsing -TimeoutSec 10 -EA Stop).Content
+                    $tmp2 = "$env:TEMP\monitor_update.ps1"
+                    [System.IO.File]::WriteAllText($tmp2, $raw2, [System.Text.UTF8Encoding]::new($false))
+                    $selfPid2  = $PID
+                    $launcher2 = "Start-Sleep 3; Stop-Process -Id $selfPid2 -Force -EA SilentlyContinue; & '$tmp2'"
+                    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher2`"" -WindowStyle Normal
+                } catch {
+                    $selfPid2  = $PID
+                    $launcher2 = "Start-Sleep 3; Stop-Process -Id $selfPid2 -Force -EA SilentlyContinue; iex (irm '$GithubUrl')"
+                    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher2`"" -WindowStyle Normal
+                }
+                exit
+            }
+            'set_autoexec' {
+                if ($data) { try { SetAutoexec $data; SendAck $cmd $true } catch { SendAck $cmd $false "$_" } }
+                else { wLog 'set_autoexec: URL vazia' 'WARN'; SendAck $cmd $false 'URL vazia' }
+            }
+            'set_cookies' {
+                $ckPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
+                if ($data) {
+                    try {
+                        $unicos = ($data | Where-Object { $_ -ne $null -and $_.Trim() -ne '' }) | Select-Object -Unique
+                        [System.IO.File]::WriteAllLines($ckPath, $unicos, [System.Text.UTF8Encoding]::new($false))
+                        wLog "Cookies gravados: $($unicos.Count) linhas" 'OK'; SendAck $cmd $true
+                    } catch { wLog "Erro ao gravar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                } else { wLog 'set_cookies: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
+            }
+            'clear_switched' {
+                $swDir = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\switched"
+                try {
+                    if (Test-Path $swDir) {
+                        $files = Get-ChildItem $swDir -Filter '*.txt' -EA SilentlyContinue
+                        $files | Remove-Item -Force -EA SilentlyContinue
+                        wLog "Pasta switched limpa: $($files.Count) arquivo(s)" 'OK'
+                    } else { wLog 'Pasta switched nao encontrada' 'WARN' }
+                    SendAck $cmd $true
+                } catch { wLog "Erro ao limpar switched: $_" 'ERROR'; SendAck $cmd $false "$_" }
+            }
+            'apply_volt_config' {
+                $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
+                if ($data) {
+                    try {
+                        $keep = @{ password = $null; username = $null }
+                        if (Test-Path $cfgPath) { $cur = Get-Content $cfgPath -Raw | ConvertFrom-Json; $keep.password = $cur.password; $keep.username = $cur.username }
+                        $obj = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+                        if ($keep.password) { $obj | Add-Member -MemberType NoteProperty -Name 'password' -Value $keep.password -Force }
+                        if ($keep.username)  { $obj | Add-Member -MemberType NoteProperty -Name 'username'  -Value $keep.username  -Force }
+                        $obj | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
+                        wLog 'volt_config.json atualizado' 'OK'; SendAck $cmd $true
+                    } catch { wLog "Erro ao gravar volt_config: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                } else { wLog 'apply_volt_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
+            }
+            'apply_webrb_config' {
+                $cfgPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\config.json"
+                if ($data) {
+                    try {
+                        $dir = Split-Path $cfgPath
+                        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+                        $json = ($data | ConvertTo-Json -Depth 10) -replace 'C:\\\\Users\\\\[^\\\\]+\\\\', "C:\\\\Users\\\\$($env:USERNAME)\\\\"
+                        $json | Set-Content -Path $cfgPath -Encoding UTF8
+                        wLog "config.json (WebRB) atualizado: $($env:USERNAME)" 'OK'; SendAck $cmd $true
+                    } catch { wLog "Erro ao gravar config.json: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                } else { wLog 'apply_webrb_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
+            }
+            'clear_cookies' {
+                $ckPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
+                try { [System.IO.File]::WriteAllText($ckPath, ''); wLog 'cookie.txt limpo' 'OK'; SendAck $cmd $true }
+                catch { wLog "Erro ao limpar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
+            }
+            'restart_pc' {
+                wLog 'Reiniciando PC...' 'WARN'
+                try { FecharTudo } catch { wLog "Aviso ao fechar: $_" 'WARN' }
+                Start-Sleep 2
+                try { & cmd.exe /c "shutdown /r /t 3 /f" 2>&1 | Out-Null; wLog 'Reinicio enviado.' 'OK'; SendAck $cmd $true }
+                catch { wLog "Erro ao reiniciar: $_" 'ERROR'; SendAck $cmd $false "$_" }
+            }
+            'pause'  { $script:Paused = $true;  $host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'; wLog 'Monitor PAUSADO.' 'WARN'; SendAck $cmd $true }
+            'resume' { $script:Paused = $false; $host.UI.RawUI.WindowTitle = 'Monitor';            wLog 'Monitor RETOMADO.' 'OK';  SendAck $cmd $true }
+            'set_volt_login' {
+                $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
+                if ($data -and $data.username -and $data.password) {
+                    try {
+                        if (-not (Test-Path $cfgPath)) { wLog 'volt_config.json nao encontrado' 'ERROR'; SendAck $cmd $false 'arquivo nao encontrado'; continue }
+                        $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+                        $cfg | Add-Member -MemberType NoteProperty -Name 'username' -Value $data.username -Force
+                        $cfg | Add-Member -MemberType NoteProperty -Name 'password' -Value $data.password -Force
+                        $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
+                        $v = Get-Content $cfgPath -Raw | ConvertFrom-Json
+                        if ($v.username -eq $data.username -and $v.password -eq $data.password) { wLog "Login Volt: $($data.username)" 'OK'; SendAck $cmd $true }
+                        else { wLog 'Falha na verificacao do login' 'ERROR'; SendAck $cmd $false 'verificacao falhou' }
+                    } catch { wLog "Erro ao salvar login: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                } else { wLog 'set_volt_login: dados invalidos' 'WARN'; SendAck $cmd $false 'dados invalidos' }
+            }
+            'screenshot' {
+                try {
+                    Add-Type -AssemblyName System.Windows.Forms,System.Drawing -EA Stop
+                    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                    $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+                    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+                    $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+                    $ms  = New-Object System.IO.MemoryStream
+                    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+                    $b64 = [Convert]::ToBase64String($ms.ToArray())
+                    $gfx.Dispose(); $bmp.Dispose(); $ms.Dispose()
+                    $ssBody = @{ image = $b64 } | ConvertTo-Json -Compress
+                    Invoke-RestMethod -Uri "$ApiUrl/screenshot/$MachineId" -Method POST -Headers $ApiHeaders -Body $ssBody -ContentType 'application/json' -TimeoutSec 30 -EA Stop | Out-Null
+                    wLog 'Screenshot enviado' 'OK'; SendAck $cmd $true
+                } catch { wLog "Erro screenshot: $_" 'ERROR'; SendAck $cmd $false "$_" }
+            }
+            'run_ps' {
+                if ($data) {
+                    try {
+                        $result = Invoke-Expression $data 2>&1
+                        $out = if ($result) { ($result | Out-String).Trim() } else { '(sem saida)' }
+                        wLog "run_ps OK: $($out.Substring(0, [Math]::Min(200, $out.Length)))" 'OK'; SendAck $cmd $true
+                    } catch { wLog "run_ps ERRO: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                } else { wLog 'run_ps: script vazio' 'WARN'; SendAck $cmd $false 'script vazio' }
+            }
+            default { wLog "Comando desconhecido: $cmd" 'WARN'; SendAck $cmd $false 'desconhecido' }
+        }
+    }
+}
+
 
 # ── Init ─────────────────────────────────────────────────────────
 Clear-Host
@@ -714,7 +705,7 @@ while ($true) {
         Remove-Item $StopFile -Force; break
     }
 
-    PollApi
+    DrainCommands
 
     # Timers baseados em tempo real (tick nao representa mais segundos com long-poll)
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
