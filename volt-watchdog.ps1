@@ -482,20 +482,12 @@ $cmdQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
 $ackQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
 $pollStop = [ref]$false
 
+# Runspace 1: long-poll — so recebe comandos, nao envia ACKs
 $pollScript = {
-    param($apiUrl, $machineId, $apiKey, $cmdQueue, $ackQueue, $pollStop)
+    param($apiUrl, $machineId, $apiKey, $cmdQueue, $pollStop)
     $headers   = @{ 'X-Api-Key' = $apiKey }
     $failCount = 0
     while (-not $pollStop.Value) {
-        # Envia ACKs pendentes primeiro
-        $ackItem = $null
-        while ($ackQueue.TryDequeue([ref]$ackItem)) {
-            try {
-                $body = $ackItem | ConvertTo-Json -Compress
-                Invoke-RestMethod -Uri "$apiUrl/ack/$machineId" -Method POST -Headers $headers -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
-            } catch {}
-        }
-        # Long-poll por comandos
         try {
             $r = Invoke-RestMethod -Uri "$apiUrl/poll/$machineId" -Method GET -Headers $headers -TimeoutSec 15 -EA Stop
             if ($failCount -gt 0) {
@@ -511,18 +503,44 @@ $pollScript = {
     }
 }
 
-$rsPoll = [RunspaceFactory]::CreateRunspace()
-$rsPoll.Open()
-$psPoll = [PowerShell]::Create()
-$psPoll.Runspace = $rsPoll
+# Runspace 2: ACK sender — loop rapido dedicado, envia assim que chega
+$ackScript = {
+    param($apiUrl, $machineId, $apiKey, $ackQueue, $pollStop)
+    $headers = @{ 'X-Api-Key' = $apiKey }
+    while (-not $pollStop.Value) {
+        $ackItem = $null
+        $sent = $false
+        while ($ackQueue.TryDequeue([ref]$ackItem)) {
+            try {
+                $body = $ackItem | ConvertTo-Json -Compress
+                Invoke-RestMethod -Uri "$apiUrl/ack/$machineId" -Method POST -Headers $headers -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
+            } catch {}
+            $sent = $true
+        }
+        # So dorme se nao tinha nada — evita CPU desnecessaria
+        if (-not $sent) { Start-Sleep -Milliseconds 200 }
+    }
+}
+
+$rsPoll = [RunspaceFactory]::CreateRunspace(); $rsPoll.Open()
+$psPoll = [PowerShell]::Create(); $psPoll.Runspace = $rsPoll
 [void]$psPoll.AddScript($pollScript)
 [void]$psPoll.AddArgument($ApiUrl)
 [void]$psPoll.AddArgument($MachineId)
 [void]$psPoll.AddArgument($ApiKey)
 [void]$psPoll.AddArgument($cmdQueue)
-[void]$psPoll.AddArgument($ackQueue)
 [void]$psPoll.AddArgument($pollStop)
 $psPoll.BeginInvoke() | Out-Null
+
+$rsAck = [RunspaceFactory]::CreateRunspace(); $rsAck.Open()
+$psAck = [PowerShell]::Create(); $psAck.Runspace = $rsAck
+[void]$psAck.AddScript($ackScript)
+[void]$psAck.AddArgument($ApiUrl)
+[void]$psAck.AddArgument($MachineId)
+[void]$psAck.AddArgument($ApiKey)
+[void]$psAck.AddArgument($ackQueue)
+[void]$psAck.AddArgument($pollStop)
+$psAck.BeginInvoke() | Out-Null
 
 function SendAck($cmd, $success, $errMsg) {
     $b = if ($errMsg) { @{ cmd = $cmd; success = $false; error = $errMsg } } else { @{ cmd = $cmd; success = [bool]$success } }
