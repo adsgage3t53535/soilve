@@ -483,14 +483,12 @@ $pollScript = {
         while ($ackQueue.TryDequeue([ref]$ackItem)) {
             try {
                 $body = $ackItem | ConvertTo-Json -Compress
-                Invoke-RestMethod -Uri "$apiUrl/ack/$machineId" -Method POST -Headers $headers `
-                    -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
+                Invoke-RestMethod -Uri "$apiUrl/ack/$machineId" -Method POST -Headers $headers -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
             } catch {}
         }
         # Long-poll por comandos
         try {
-            $r = Invoke-RestMethod -Uri "$apiUrl/poll/$machineId" -Method GET `
-                 -Headers $headers -TimeoutSec 15 -EA Stop
+            $r = Invoke-RestMethod -Uri "$apiUrl/poll/$machineId" -Method GET -Headers $headers -TimeoutSec 15 -EA Stop
             if ($failCount -gt 0) {
                 $cmdQueue.Enqueue(@{ _internal = 'restored'; failCount = $failCount })
                 $failCount = 0
@@ -507,9 +505,7 @@ $pollScript = {
 $rsPoll = [RunspaceFactory]::CreateRunspace(); $rsPoll.Open()
 $psPoll = [PowerShell]::Create()
 $psPoll.Runspace = $rsPoll
-$psPoll.AddScript($pollScript).AddArgument($ApiUrl).AddArgument($MachineId) `
-    .AddArgument($ApiKey).AddArgument($cmdQueue).AddArgument($ackQueue) `
-    .AddArgument($pollStop) | Out-Null
+$psPoll.AddScript($pollScript).AddArgument($ApiUrl).AddArgument($MachineId).AddArgument($ApiKey).AddArgument($cmdQueue).AddArgument($ackQueue).AddArgument($pollStop) | Out-Null
 $psPoll.BeginInvoke() | Out-Null
 
 function SendAck($cmd, $success, $errMsg) {
