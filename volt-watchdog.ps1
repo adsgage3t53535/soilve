@@ -137,9 +137,20 @@ $psMin.BeginInvoke() | Out-Null
 
 # ── VoltPro ──────────────────────────────────────────────────────
 function GetVoltProc {
-    Get-Process -EA SilentlyContinue | Where-Object {
-        try { $_.Path -eq $VoltExe } catch { $false }
+    # 1. Path exato
+    $p = Get-Process -EA SilentlyContinue | Where-Object {
+        try { $_.Path -and $_.Path -eq $VoltExe } catch { $false }
     } | Select-Object -First 1
+    if ($p) { return $p }
+    # 2. Qualquer exe dentro da pasta VoltBlack
+    $voltDir = [System.IO.Path]::GetDirectoryName($VoltExe)
+    $p = Get-Process -EA SilentlyContinue | Where-Object {
+        try { $_.Path -and $_.Path.StartsWith($voltDir, [System.StringComparison]::OrdinalIgnoreCase) } catch { $false }
+    } | Select-Object -First 1
+    if ($p) { return $p }
+    # 3. Pelo nome do exe sem extensao
+    $exeName = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
+    return Get-Process -Name $exeName -EA SilentlyContinue | Select-Object -First 1
 }
 
 function AbrirVolt {
@@ -186,17 +197,14 @@ function GetFarmSyncProc {
     } | Select-Object -First 1
 }
 
-# Detecta se o FarmSync esta aberto: verifica pelo bat (processo cmd com FarmSync_AutoStart) ou pelo exe
+# Detecta se o FarmSync esta aberto pelo exe
 function FarmSyncAberto {
-    # Verifica pelo exe direto
-    $byExe = GetFarmSyncProc
-    if ($byExe) { return $true }
-    # Verifica pelo bat de autostart (indica que foi aberto via bat)
-    $batName = [System.IO.Path]::GetFileNameWithoutExtension($FarmSyncBat)
-    $byBat = Get-Process -Name 'cmd' -EA SilentlyContinue | Where-Object {
-        try { $_.MainWindowTitle -like "*$batName*" -or $_.CommandLine -like "*FarmSync*" } catch { $false }
-    } | Select-Object -First 1
-    return ($null -ne $byBat)
+    $p = GetFarmSyncProc
+    if ($p) { return $true }
+    # Fallback: pelo nome do exe
+    $exeName = [System.IO.Path]::GetFileNameWithoutExtension($FarmSyncExe)
+    $p2 = Get-Process -Name $exeName -EA SilentlyContinue | Select-Object -First 1
+    return ($null -ne $p2)
 }
 
 function AbrirFarmSync {
@@ -725,9 +733,13 @@ while ($true) {
             $voltProc = GetVoltProc
             if (-not $voltProc) {
                 wLog 'VoltPro nao encontrado. Iniciando...' 'WARN'
-                Start-Process $VoltExe
-                Start-Sleep 10
-                OrganizarJanela
+                    if (-not (Test-Path $VoltExe)) {
+                        wLog "ERRO: exe nao existe em: $VoltExe" 'ERROR'
+                    } else {
+                        Start-Process $VoltExe
+                        Start-Sleep 10
+                        OrganizarJanela
+                    }
             }
         }
     }
