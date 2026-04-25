@@ -132,7 +132,7 @@ $rsMin = [RunspaceFactory]::CreateRunspace()
 $rsMin.Open()
 $psMin = [PowerShell]::Create()
 $psMin.Runspace = $rsMin
-$psMin.AddScript($minimizerScript) | Out-Null
+[void]$psMin.AddScript($minimizerScript)
 $psMin.BeginInvoke() | Out-Null
 
 # ── VoltPro ──────────────────────────────────────────────────────
@@ -418,7 +418,8 @@ $rs.Open()
 $rs.SessionStateProxy.SetVariable('sharedRef', $shared)
 $ps = [PowerShell]::Create()
 $ps.Runspace = $rs
-$ps.AddScript($metricsScript).AddArgument($shared) | Out-Null
+[void]$ps.AddScript($metricsScript)
+[void]$ps.AddArgument($shared)
 $ps.BeginInvoke() | Out-Null
 
 # ── Reportar metricas ao servidor ───────────────────────────────
@@ -502,10 +503,17 @@ $pollScript = {
     }
 }
 
-$rsPoll = [RunspaceFactory]::CreateRunspace(); $rsPoll.Open()
+$rsPoll = [RunspaceFactory]::CreateRunspace()
+$rsPoll.Open()
 $psPoll = [PowerShell]::Create()
 $psPoll.Runspace = $rsPoll
-$psPoll.AddScript($pollScript).AddArgument($ApiUrl).AddArgument($MachineId).AddArgument($ApiKey).AddArgument($cmdQueue).AddArgument($ackQueue).AddArgument($pollStop) | Out-Null
+[void]$psPoll.AddScript($pollScript)
+[void]$psPoll.AddArgument($ApiUrl)
+[void]$psPoll.AddArgument($MachineId)
+[void]$psPoll.AddArgument($ApiKey)
+[void]$psPoll.AddArgument($cmdQueue)
+[void]$psPoll.AddArgument($ackQueue)
+[void]$psPoll.AddArgument($pollStop)
 $psPoll.BeginInvoke() | Out-Null
 
 function SendAck($cmd, $success, $errMsg) {
