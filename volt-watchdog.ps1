@@ -1,5 +1,5 @@
 # ================================================================
-#  MONITOR - VoltPro Watchdog + Roblox Error Killer
+#  MONITOR - VoltPro Watchdog + Roblox Error Killer + FarmSync
 # ================================================================
 $host.UI.RawUI.WindowTitle = 'Monitor'
 
@@ -14,32 +14,32 @@ public class WinAPI {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc p, IntPtr lp);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr wp, IntPtr lp2);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int nCmdShow);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    public const int SW_MINIMIZE = 6;
     public delegate bool EnumWindowsProc(IntPtr h, IntPtr lp);
 }
 '@ -ErrorAction SilentlyContinue
 
 # ── Configuracoes ────────────────────────────────────────────────
-$VoltExe     = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.6.exe"
-$VoltProc    = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
+$VoltExe      = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.6.exe"
+$VoltProc     = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
 
-# Helper: encontra processo do VoltPro pelo caminho do exe
-function GetVoltProc {
-    Get-Process -EA SilentlyContinue | Where-Object {
-        try { $_.Path -eq $VoltExe } catch { $false }
-    } | Select-Object -First 1
-}
-$LogFile     = $env:TEMP + '\monitor.log'
-$StopFile    = $env:TEMP + '\monitor.stop'
-$WinW        = 900; $WinH = 500
-$CmdW        = 700; $CmdH = 500
-$ApiUrl      = 'https://vps-production-2bd3.up.railway.app'
-$ApiKey      = 'GobrinNoti'
-$ApiHeaders  = @{ 'X-Api-Key' = $ApiKey }
-$GithubUrl   = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
-$WebRBDir    = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
-$WebRBExe    = 'webrb.exe'
-$ErrorTitles = @('Error','Roblox Error','Crash','Disconnected','An error occurred','Notice')
+$FarmSyncExe  = "$env:USERPROFILE\Desktop\farmsync\client_web.exe"
+$FarmSyncBat  = "$env:USERPROFILE\Desktop\farmsync\FarmSync_AutoStart.bat"
+$FarmSyncKey  = "$env:USERPROFILE\Desktop\farmsync\key.txt"
+
+$LogFile      = $env:TEMP + '\monitor.log'
+$StopFile     = $env:TEMP + '\monitor.stop'
+$WinW         = 900; $WinH = 500
+$CmdW         = 700; $CmdH = 500
+$ApiUrl       = 'https://vps-production-2bd3.up.railway.app'
+$ApiKey       = 'GobrinNoti'
+$ApiHeaders   = @{ 'X-Api-Key' = $ApiKey }
+$GithubUrl    = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
+$WebRBDir     = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer"
+$WebRBExe     = 'webrb.exe'
+$ErrorTitles  = @('Error','Roblox Error','Crash','Disconnected','An error occurred','Notice')
 
 # MachineId via auth.json (Note field)
 $_authFile = "$WebRBDir\auth.json"
@@ -48,8 +48,8 @@ $MachineId = try {
     if ($j.Note) { $j.Note } else { $env:COMPUTERNAME }
 } catch { $env:COMPUTERNAME }
 
-$script:Paused  = $false
-$script:CurHash = $null
+$script:Paused    = $false
+$script:CurHash   = $null
 
 # ── Log ─────────────────────────────────────────────────────────
 $script:LogBuffer = [System.Collections.Generic.List[hashtable]]::new()
@@ -69,7 +69,6 @@ function wLog($m, $l = 'INFO') {
     Add-Content $LogFile $s -Encoding UTF8
     $lines = Get-Content $LogFile -EA SilentlyContinue
     if ($lines.Count -gt 500) { $lines | Select-Object -Last 250 | Set-Content $LogFile -Encoding UTF8 }
-    # buffer para envio ao servidor
     $script:LogBuffer.Add(@{ t = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); l = $l; m = $m })
     if ($script:LogBuffer.Count -gt 100) { $script:LogBuffer.RemoveAt(0) }
 }
@@ -94,9 +93,55 @@ function OrganizarJanela {
         $xC = $sw - $WinW - 10 - $CmdW - 10; $yC = $sh - $CmdH - 50
         [WinAPI]::SetWindowPos($hwndCmd, [IntPtr]::Zero, $xC, $yC, $CmdW, $CmdH, 0x0040) | Out-Null
     }
+    MinimizarRoblox
 }
 
+# ── Roblox Minimizer (tambem chamado pelo runspace) ──────────────
+function MinimizarRoblox {
+    $procs = Get-Process -Name 'RobloxPlayerBeta' -EA SilentlyContinue
+    foreach ($p in $procs) {
+        if ($p.MainWindowHandle -ne [IntPtr]::Zero) {
+            [WinAPI]::ShowWindow($p.MainWindowHandle, [WinAPI]::SW_MINIMIZE) | Out-Null
+        }
+    }
+}
+
+# ── Background runspace: minimiza Roblox a cada 2s ──────────────
+$minimizerScript = {
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class WinAPIMin {
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int nCmdShow);
+    public const int SW_MINIMIZE = 6;
+}
+'@ -ErrorAction SilentlyContinue
+    while ($true) {
+        try {
+            $procs = Get-Process -Name 'RobloxPlayerBeta' -ErrorAction SilentlyContinue
+            foreach ($p in $procs) {
+                if ($p.MainWindowHandle -ne [IntPtr]::Zero) {
+                    [WinAPIMin]::ShowWindow($p.MainWindowHandle, [WinAPIMin]::SW_MINIMIZE) | Out-Null
+                }
+            }
+        } catch {}
+        Start-Sleep -Seconds 2
+    }
+}
+$rsMin = [RunspaceFactory]::CreateRunspace()
+$rsMin.Open()
+$psMin = [PowerShell]::Create()
+$psMin.Runspace = $rsMin
+$psMin.AddScript($minimizerScript) | Out-Null
+$psMin.BeginInvoke() | Out-Null
+
 # ── VoltPro ──────────────────────────────────────────────────────
+function GetVoltProc {
+    Get-Process -EA SilentlyContinue | Where-Object {
+        try { $_.Path -eq $VoltExe } catch { $false }
+    } | Select-Object -First 1
+}
+
 function AbrirVolt {
     wLog 'Abrindo VoltPro...' 'OK'
     Start-Process $VoltExe
@@ -131,8 +176,69 @@ function FecharWebRB {
     'webrb','WebRB','YummyWebPlayer','yummy' | ForEach-Object {
         Get-Process -Name $_ -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
     }
-    # Kill by window title containing Yummy
     Get-Process -EA SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*Yummy*' -or $_.MainWindowTitle -like '*WebRB*' } | Stop-Process -Force -EA SilentlyContinue
+}
+
+# ── FarmSync ─────────────────────────────────────────────────────
+function GetFarmSyncProc {
+    Get-Process -EA SilentlyContinue | Where-Object {
+        try { $_.Path -eq $FarmSyncExe } catch { $false }
+    } | Select-Object -First 1
+}
+
+# Detecta se o FarmSync esta aberto: verifica pelo bat (processo cmd com FarmSync_AutoStart) ou pelo exe
+function FarmSyncAberto {
+    # Verifica pelo exe direto
+    $byExe = GetFarmSyncProc
+    if ($byExe) { return $true }
+    # Verifica pelo bat de autostart (indica que foi aberto via bat)
+    $batName = [System.IO.Path]::GetFileNameWithoutExtension($FarmSyncBat)
+    $byBat = Get-Process -Name 'cmd' -EA SilentlyContinue | Where-Object {
+        try { $_.MainWindowTitle -like "*$batName*" -or $_.CommandLine -like "*FarmSync*" } catch { $false }
+    } | Select-Object -First 1
+    return ($null -ne $byBat)
+}
+
+function AbrirFarmSync {
+    wLog 'Abrindo FarmSync...' 'OK'
+    Start-Process $FarmSyncExe -ErrorAction SilentlyContinue
+    Start-Sleep 3
+}
+
+function FecharFarmSync {
+    wLog 'Fechando FarmSync...' 'WARN'
+    GetFarmSyncProc | Stop-Process -Force -EA SilentlyContinue
+    # fecha tambem qualquer cmd que tenha aberto pelo bat
+    Get-Process -Name 'cmd' -EA SilentlyContinue | Where-Object {
+        try { $_.MainWindowTitle -like '*FarmSync*' } catch { $false }
+    } | Stop-Process -Force -EA SilentlyContinue
+}
+
+function ReiniciarFarmSync {
+    Separador
+    wLog 'Reiniciando FarmSync...' 'WARN'
+    FecharFarmSync
+    Start-Sleep 2
+    AbrirFarmSync
+    Separador
+}
+
+function SetFarmSyncKey($key) {
+    try {
+        $key = $key.Trim()
+        if ($key.Length -ne 64) {
+            wLog "SetFarmSyncKey: key invalida (esperado 64 chars, recebido $($key.Length))" 'ERROR'
+            return $false
+        }
+        $dir = Split-Path $FarmSyncKey
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        [System.IO.File]::WriteAllText($FarmSyncKey, $key, [System.Text.UTF8Encoding]::new($false))
+        wLog "FarmSync key atualizada: $($key.Substring(0,8))..." 'OK'
+        return $true
+    } catch {
+        wLog "Erro ao gravar FarmSync key: $_" 'ERROR'
+        return $false
+    }
 }
 
 # ── Roblox ───────────────────────────────────────────────────────
@@ -150,6 +256,7 @@ function FecharTudo {
     FecharTodosRoblox
     FecharVolt
     FecharWebRB
+    FecharFarmSync
 }
 
 # ── Reiniciar tudo ───────────────────────────────────────────────
@@ -159,7 +266,7 @@ function ReiniciarTudo {
     FecharTodosRoblox
     FecharVolt
     FecharWebRB
-    # Limpa workspace do Volt
+    FecharFarmSync
     $wsDir = $env:USERPROFILE + '\Desktop\VoltBlack\workspace'
     if (Test-Path $wsDir) {
         Get-ChildItem $wsDir -Recurse | Remove-Item -Force -Recurse -EA SilentlyContinue
@@ -181,7 +288,6 @@ function SetAutoexec($url) {
     $dir = $env:USERPROFILE + '\Desktop\VoltBlack\autoexec'
     try {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        # deleta tudo exceto checkyummy.lua
         Get-ChildItem $dir | Where-Object { $_.Name -ne 'checkyummy.lua' } | Remove-Item -Force -EA SilentlyContinue
         $fileName = [System.IO.Path]::GetFileName(([uri]$url).LocalPath)
         if (-not $fileName -or $fileName -notmatch '\.\w+$') { $fileName = 'Script.txt' }
@@ -222,10 +328,8 @@ function CheckAndKillErrors {
 
 # ── Detector de NOTICE (VoltPro) ─────────────────────────────────
 function CheckNotice {
-    $found = $false
     $voltProc = GetVoltProc
     if (-not $voltProc) { $script:NoticeCount = 0; return }
-    # verifica janelas do VoltPro e de todos os processos filhos procurando "Notice"
     $allPids = @($voltProc.Id)
     try { $allPids += (Get-Process -EA SilentlyContinue | Where-Object { $_.Parent.Id -eq $voltProc.Id }).Id } catch {}
     $callback2 = [WinAPI+EnumWindowsProc]{
@@ -269,24 +373,28 @@ function CheckUpdate {
         if ($null -eq $script:CurHash) {
             $script:CurHash = $hash
         } elseif ($hash -ne $script:CurHash) {
-            wLog 'Nova versao detectada. Reiniciando...' 'WARN'
-            Start-Sleep 2
-            $c = 'iex (irm ''' + $GithubUrl + ''')'
-            Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $c"
+            wLog 'Nova versao detectada. Atualizando...' 'WARN'
+            $script:CurHash = $hash
+            # Salva o script novo em disco e executa em nova janela,
+            # passando o PID atual para que o novo processo feche esta janela.
+            $tmpPath = "$env:TEMP\monitor_update.ps1"
+            [System.IO.File]::WriteAllText($tmpPath, $raw, [System.Text.UTF8Encoding]::new($false))
+            $selfPid = $PID
+            # Wrapper: mata o processo antigo apos 3s e executa o novo script
+            $launcher = "Start-Sleep 3; Stop-Process -Id $selfPid -Force -EA SilentlyContinue; & '$tmpPath'"
+            Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher`"" -WindowStyle Normal
             exit
         }
     } catch { }
 }
 
-# ── Reportar metricas ao servidor ───────────────────────────────
-# ── Métricas de sistema em background (CPU/RAM a cada 30s) ───────
+# ── Metricas de sistema em background (CPU/RAM a cada 30s) ───────
 $shared = [ref]@{ cpu = 0; ramUsed = 0; ramTotal = 0 }
 
 $metricsScript = {
     param($sharedRef)
     while ($true) {
         try {
-            # CPU — dois snapshots com 1s de diferença (metodo preciso, igual gerenciador de tarefas)
             $s1 = Get-CimInstance -Query "select PercentIdleTime, Timestamp_Sys100NS from Win32_PerfRawData_PerfOS_Processor where Name='_Total'" -EA Stop
             Start-Sleep -Milliseconds 1000
             $s2 = Get-CimInstance -Query "select PercentIdleTime, Timestamp_Sys100NS from Win32_PerfRawData_PerfOS_Processor where Name='_Total'" -EA Stop
@@ -295,18 +403,16 @@ $metricsScript = {
             $idle = if ($timeDelta -gt 0) { $idleDelta / $timeDelta * 100 } else { 100 }
             $cpu  = [Math]::Round(100 - $idle, 1)
             if ($cpu -lt 0) { $cpu = 0 }
-            # RAM
             $os = Get-CimInstance Win32_OperatingSystem -EA Stop
             $total = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
             $free  = [Math]::Round($os.FreePhysicalMemory     / 1MB, 2)
             $used  = [Math]::Round($total - $free, 2)
             $sharedRef.Value = @{ cpu = $cpu; ramUsed = $used; ramTotal = $total }
         } catch {}
-        Start-Sleep -Seconds 29   # 1s ja foi gasto nos snapshots
+        Start-Sleep -Seconds 29
     }
 }
 
-# Runspace para nao bloquear o loop principal
 $rs = [RunspaceFactory]::CreateRunspace()
 $rs.Open()
 $rs.SessionStateProxy.SetVariable('sharedRef', $shared)
@@ -315,24 +421,39 @@ $ps.Runspace = $rs
 $ps.AddScript($metricsScript).AddArgument($shared) | Out-Null
 $ps.BeginInvoke() | Out-Null
 
+# ── Reportar metricas ao servidor ───────────────────────────────
 function ReportMetrics {
     try {
-        $roblox = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Count
-        $volt   = if (GetVoltProc) { 1 } else { 0 }
-        $webrb  = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
+        $roblox   = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Count
+        $volt     = if (GetVoltProc) { 1 } else { 0 }
+        $webrb    = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
+        $farmsync = if (FarmSyncAberto) { 1 } else { 0 }
         $voltUser = ''
         $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
         if (Test-Path $cfgPath) {
             try { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json; $voltUser = if ($cfg.username) { $cfg.username } else { '' } } catch { }
         }
-        # lê métricas coletadas pelo thread background
         $m        = $shared.Value
         $cpu      = if ($m.cpu)      { $m.cpu }      else { 0 }
         $ramUsed  = if ($m.ramUsed)  { $m.ramUsed }  else { 0 }
         $ramTotal = if ($m.ramTotal) { $m.ramTotal }  else { 0 }
-        $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; voltUser = $voltUser; cpu = $cpu; ramUsed = $ramUsed; ramTotal = $ramTotal } | ConvertTo-Json -Compress
+
+        # Signature para detectar mudancas — CPU arredondado em 2% p/ evitar ruido
+        $cpuR  = [Math]::Round($cpu / 2) * 2
+        $sig   = "$roblox|$volt|$webrb|$farmsync|$voltUser|$cpuR|$([Math]::Round($ramUsed,1))"
+
+        $script:ForceReportIn--
+        $mustSend = ($sig -ne $script:LastReportSig) -or ($script:ForceReportIn -le 0)
+        if (-not $mustSend) { return }  # nada mudou, pula o POST
+
+        $script:LastReportSig = $sig
+        $script:ForceReportIn = 60   # forca envio a cada ~5 min (60 * 5s)
+
+        $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; farmsync = $farmsync; voltUser = $voltUser; cpu = $cpu; ramUsed = $ramUsed; ramTotal = $ramTotal } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
-        # flush log buffer
+    } catch { }
+    # flush log buffer sempre (independente de delta)
+    try {
         if ($script:LogBuffer.Count -gt 0) {
             $toSend = $script:LogBuffer.ToArray()
             $script:LogBuffer.Clear()
@@ -345,19 +466,26 @@ function ReportMetrics {
 # ── ACK helper ───────────────────────────────────────────────────
 function SendAck($cmd, $success, $errMsg) {
     try {
-        $body = @{ cmd = $cmd; success = $success } | ConvertTo-Json -Compress
-        if ($errMsg) { $body = @{ cmd = $cmd; success = $false; error = $errMsg } | ConvertTo-Json -Compress }
+        $b = if ($errMsg) { @{ cmd = $cmd; success = $false; error = $errMsg } } else { @{ cmd = $cmd; success = [bool]$success } }
+        $body = $b | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/ack/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 4 -EA Stop | Out-Null
     } catch { }
 }
 
-$script:PollFailCount = 0
-$script:NoticeCount   = 0   # contador consecutivo de NOTICE detectado
+$script:PollFailCount  = 0
+$script:NoticeCount    = 0
+$script:LastReportSig  = ''   # signature do ultimo report enviado
+$script:ForceReportIn  = 0    # forca envio a cada 60 ciclos mesmo sem mudanca
+$script:LastReport     = 0    # timestamp do ultimo ReportMetrics
+$script:LastNotice     = 0    # timestamp do ultimo CheckNotice
+$script:LastUpdate     = 0    # timestamp do ultimo CheckUpdate
+$script:LastOrg        = 0    # timestamp do ultimo OrganizarJanela
+$script:LastVoltCheck  = 0    # timestamp do ultimo check do VoltPro
 
 # ── Poll API ─────────────────────────────────────────────────────
 function PollApi {
     try {
-        $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -Headers $ApiHeaders -TimeoutSec 5 -EA Stop
+        $r = Invoke-RestMethod -Uri "$ApiUrl/poll/$MachineId" -Method GET -Headers $ApiHeaders -TimeoutSec 15 -EA Stop
         if ($script:PollFailCount -gt 0) {
             wLog "Conexao restaurada apos $($script:PollFailCount) falhas." 'OK'
             $script:PollFailCount = 0
@@ -368,18 +496,43 @@ function PollApi {
             switch ($cmd) {
                 'open_volt'        { try { AbrirVolt;         SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
                 'close_volt'       { try { FecharVolt;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
-                'restart_volt'     { try { wLog 'Reiniciando VoltPro...' 'OK'; ReiniciarVolt; SendAck $cmd $true } catch { SendAck $cmd $false "$_" } }
+                'restart_volt'     { try { ReiniciarVolt;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
                 'open_webrb'       { try { AbrirWebRB;        SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
                 'close_webrb'      { try { FecharWebRB;       SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
                 'close_all_roblox' { try { FecharTodosRoblox; SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
                 'restart_all'      { try { ReiniciarTudo;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
                 'organize_windows' { try { OrganizarJanela;   SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'minimize_roblox'  { try { MinimizarRoblox;   SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+
+                # ── FarmSync ──────────────────────────────────────
+                'open_farmsync'    { try { AbrirFarmSync;     SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'close_farmsync'   { try { FecharFarmSync;    SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'restart_farmsync' { try { ReiniciarFarmSync; SendAck $cmd $true  } catch { SendAck $cmd $false "$_" } }
+                'set_farmsync_key' {
+                    if ($data) {
+                        try {
+                            $ok = SetFarmSyncKey $data
+                            if ($ok) { SendAck $cmd $true } else { SendAck $cmd $false 'key invalida' }
+                        } catch { SendAck $cmd $false "$_" }
+                    } else { wLog 'set_farmsync_key: key vazia' 'WARN'; SendAck $cmd $false 'key vazia' }
+                }
+
                 'restart_cmd'      {
                     SendAck $cmd $true
                     wLog 'Reiniciando CMD...' 'WARN'
-                    Start-Sleep 1
-                    $c = 'iex (irm ''' + $GithubUrl + ''')'
-                    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -Command $c"
+                    try {
+                        $raw2 = (Invoke-WebRequest -Uri $GithubUrl -UseBasicParsing -TimeoutSec 10 -EA Stop).Content
+                        $tmpPath2 = "$env:TEMP\monitor_update.ps1"
+                        [System.IO.File]::WriteAllText($tmpPath2, $raw2, [System.Text.UTF8Encoding]::new($false))
+                        $selfPid2 = $PID
+                        $launcher2 = "Start-Sleep 3; Stop-Process -Id $selfPid2 -Force -EA SilentlyContinue; & '$tmpPath2'"
+                        Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher2`"" -WindowStyle Normal
+                    } catch {
+                        # fallback se nao conseguir baixar
+                        $selfPid2 = $PID
+                        $launcher2 = "Start-Sleep 3; Stop-Process -Id $selfPid2 -Force -EA SilentlyContinue; iex (irm '$GithubUrl')"
+                        Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher2`"" -WindowStyle Normal
+                    }
                     exit
                 }
                 'set_autoexec'     {
@@ -392,7 +545,7 @@ function PollApi {
                     $cookiePath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
                     if ($data) {
                         try {
-                            $lista = $data | Where-Object { $_ -ne $null -and $_.Trim() -ne '' }
+                            $lista  = $data | Where-Object { $_ -ne $null -and $_.Trim() -ne '' }
                             $unicos = $lista | Select-Object -Unique
                             [System.IO.File]::WriteAllLines($cookiePath, $unicos, [System.Text.UTF8Encoding]::new($false))
                             wLog "Cookies gravados: $($unicos.Count) linhas" 'OK'
@@ -415,14 +568,12 @@ function PollApi {
                     $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
                     if ($data) {
                         try {
-                            # preserva password e username do arquivo existente
                             $keep = @{ password = $null; username = $null }
                             if (Test-Path $cfgPath) {
                                 $cur = Get-Content $cfgPath -Raw | ConvertFrom-Json
                                 $keep.password = $cur.password
                                 $keep.username  = $cur.username
                             }
-                            # converte data para PSObject e injeta as credenciais preservadas
                             $obj = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
                             if ($keep.password) { $obj | Add-Member -MemberType NoteProperty -Name 'password' -Value $keep.password -Force }
                             if ($keep.username)  { $obj | Add-Member -MemberType NoteProperty -Name 'username'  -Value $keep.username  -Force }
@@ -438,7 +589,6 @@ function PollApi {
                         try {
                             $dir = Split-Path $cfgPath
                             if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-                            # converte para JSON string, substitui qualquer C:\Users\QUALQUER\ pelo usuario correto
                             $json = $data | ConvertTo-Json -Depth 10
                             $json = $json -replace 'C:\\\\Users\\\\[^\\\\]+\\\\', "C:\\\\Users\\\\$($env:USERNAME)\\\\"
                             $json | Set-Content -Path $cfgPath -Encoding UTF8
@@ -463,10 +613,7 @@ function PollApi {
                         & cmd.exe /c "shutdown /r /t 3 /f" 2>&1 | Out-Null
                         wLog 'Comando de reinicio enviado.' 'OK'
                         SendAck $cmd $true
-                    } catch {
-                        wLog "Erro ao reiniciar: $_" 'ERROR'
-                        SendAck $cmd $false "$_"
-                    }
+                    } catch { wLog "Erro ao reiniciar: $_" 'ERROR'; SendAck $cmd $false "$_" }
                 }
                 'pause' {
                     $script:Paused = $true
@@ -493,7 +640,6 @@ function PollApi {
                             $cfg | Add-Member -MemberType NoteProperty -Name 'username' -Value $data.username -Force
                             $cfg | Add-Member -MemberType NoteProperty -Name 'password' -Value $data.password -Force
                             $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
-                            # verifica se foi salvo corretamente
                             $verify = Get-Content $cfgPath -Raw | ConvertFrom-Json
                             if ($verify.username -eq $data.username -and $verify.password -eq $data.password) {
                                 wLog "Login Volt aplicado: $($data.username)" 'OK'
@@ -547,11 +693,12 @@ function PollApi {
 Clear-Host
 Write-Host ''
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
-Write-Host '  |        MONITOR  -  VoltPro Watchdog + Roblox Killer      |' -ForegroundColor DarkCyan
+Write-Host '  |   MONITOR  -  VoltPro + FarmSync Watchdog + Roblox      |' -ForegroundColor DarkCyan
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
 Write-Host ''
-Write-Host '  Volt : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe   -ForegroundColor Cyan
-Write-Host '  ID   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId -ForegroundColor Cyan
+Write-Host '  Volt     : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe      -ForegroundColor Cyan
+Write-Host '  FarmSync : ' -NoNewline -ForegroundColor DarkGray; Write-Host $FarmSyncExe  -ForegroundColor Cyan
+Write-Host '  ID       : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId    -ForegroundColor Cyan
 Write-Host ''
 Separador; Write-Host ''
 wLog 'Monitor iniciado' 'OK'
@@ -559,7 +706,7 @@ $host.UI.RawUI.WindowTitle = 'Monitor'
 OrganizarJanela
 
 # ── Loop ─────────────────────────────────────────────────────────
-$tick = 0
+$tick = 0  # mantido por compatibilidade
 while ($true) {
     if (Test-Path $StopFile) {
         Write-Host ''; Separador
@@ -568,25 +715,25 @@ while ($true) {
     }
 
     PollApi
-    if ($tick % 5  -eq 0) { ReportMetrics }
-    if ($tick % 5  -eq 0) { CheckNotice }
-    if ($tick % 60 -eq 0) { CheckUpdate }
+
+    # Timers baseados em tempo real (tick nao representa mais segundos com long-poll)
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    if (($now - $script:LastReport)  -ge 5)  { ReportMetrics;   $script:LastReport  = $now }
+    if (($now - $script:LastNotice)  -ge 5)  { CheckNotice;     $script:LastNotice  = $now }
+    if (($now - $script:LastUpdate)  -ge 60) { CheckUpdate;     $script:LastUpdate  = $now }
+    if (($now - $script:LastOrg)     -ge 60) { OrganizarJanela; $script:LastOrg     = $now }
     CheckAndKillErrors
 
     if (-not $script:Paused) {
-        if ($tick % 10 -eq 0) {
+        if (($now - $script:LastVoltCheck) -ge 10) {
+            $script:LastVoltCheck = $now
             $voltProc = GetVoltProc
             if (-not $voltProc) {
                 wLog 'VoltPro nao encontrado. Iniciando...' 'WARN'
                 Start-Process $VoltExe
                 Start-Sleep 10
                 OrganizarJanela
-                $tick++; Start-Sleep 1; continue
             }
         }
-        if ($tick % 60 -eq 0 -and $tick -gt 0) { OrganizarJanela }
     }
-
-    $tick++
-    Start-Sleep 1
 }
