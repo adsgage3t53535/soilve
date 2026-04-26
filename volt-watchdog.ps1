@@ -123,20 +123,9 @@ function MinimizarRoblox {
 
 # ── VoltPro ──────────────────────────────────────────────────────
 function GetVoltProc {
-    # 1. Path exato
-    $p = Get-Process -EA SilentlyContinue | Where-Object {
-        try { $_.Path -and $_.Path -eq $VoltExe } catch { $false }
+    Get-Process -EA SilentlyContinue | Where-Object {
+        try { $_.Path -eq $VoltExe } catch { $false }
     } | Select-Object -First 1
-    if ($p) { return $p }
-    # 2. Qualquer exe dentro da pasta VoltBlack (pega VoltPro_6.6.exe, Multi-Instance Manager, etc.)
-    $voltDir = [System.IO.Path]::GetDirectoryName($VoltExe)
-    $p = Get-Process -EA SilentlyContinue | Where-Object {
-        try { $_.Path -and $_.Path.StartsWith($voltDir, [System.StringComparison]::OrdinalIgnoreCase) } catch { $false }
-    } | Select-Object -First 1
-    if ($p) { return $p }
-    # 3. Pelo nome exato do processo (Get-Process -Name nao suporta pontos — usa Where-Object)
-    $exeName = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
-    return Get-Process -EA SilentlyContinue | Where-Object { $_.Name -eq $exeName } | Select-Object -First 1
 }
 
 function AbrirVolt {
@@ -747,13 +736,9 @@ while ($true) {
             $voltProc = GetVoltProc
             if (-not $voltProc) {
                 wLog 'VoltPro nao encontrado. Iniciando...' 'WARN'
-                    if (-not (Test-Path $VoltExe)) {
-                        wLog "ERRO: exe nao existe em: $VoltExe" 'ERROR'
-                    } else {
-                        Start-Process $VoltExe
-                        Start-Sleep 10
-                        OrganizarJanela
-                    }
+                Start-Process $VoltExe
+                Start-Sleep 10
+                OrganizarJanela
             }
         }
     }
