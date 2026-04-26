@@ -97,18 +97,20 @@ function OrganizarJanela {
 }
 
 # ── Roblox Minimizer ─────────────────────────────────────────────
+# PostMessage WM_SYSCOMMAND/SC_MINIMIZE nao e bloqueado pelo UIPI
+# (funciona sem admin, ao contrario de ShowWindow em processos elevados)
 function MinimizarRoblox {
-    # Usa EnumWindows para achar todas as janelas do Roblox pelo titulo
-    # (MainWindowHandle pode ser zero em instancias multiplas)
     $robloxPids = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Id
     if (-not $robloxPids -or $robloxPids.Count -eq 0) { return }
+    $WM_SYSCOMMAND = [IntPtr]0x0112
+    $SC_MINIMIZE   = [IntPtr]0xF020
     $callback = [WinAPI+EnumWindowsProc]{
         param($hwnd, $lp)
         if ([WinAPI]::IsWindowVisible($hwnd)) {
             $pid2 = 0
             [WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid2) | Out-Null
             if ($robloxPids -contains $pid2) {
-                [WinAPI]::ShowWindow($hwnd, [WinAPI]::SW_MINIMIZE) | Out-Null
+                [WinAPI]::PostMessage($hwnd, 0x0112, [IntPtr]0xF020, [IntPtr]::Zero) | Out-Null
             }
         }
         return $true
