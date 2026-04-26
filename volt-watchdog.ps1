@@ -195,7 +195,12 @@ function FarmSyncAberto {
 
 function AbrirFarmSync {
     wLog 'Abrindo FarmSync...' 'OK'
-    Start-Process $FarmSyncExe -ErrorAction SilentlyContinue
+    if (-not (Test-Path $FarmSyncExe)) {
+        wLog "FarmSync exe nao encontrado: $FarmSyncExe" 'ERROR'
+        return
+    }
+    $farmDir = [System.IO.Path]::GetDirectoryName($FarmSyncExe)
+    Start-Process -FilePath $FarmSyncExe -WorkingDirectory $farmDir -ErrorAction SilentlyContinue
     Start-Sleep 3
 }
 
