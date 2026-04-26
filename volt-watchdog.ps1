@@ -96,44 +96,28 @@ function OrganizarJanela {
     MinimizarRoblox
 }
 
-# ── Roblox Minimizer (tambem chamado pelo runspace) ──────────────
+# ── Roblox Minimizer ─────────────────────────────────────────────
 function MinimizarRoblox {
-    $procs = Get-Process -Name 'RobloxPlayerBeta' -EA SilentlyContinue
-    foreach ($p in $procs) {
-        if ($p.MainWindowHandle -ne [IntPtr]::Zero) {
-            [WinAPI]::ShowWindow($p.MainWindowHandle, [WinAPI]::SW_MINIMIZE) | Out-Null
+    # Usa EnumWindows para achar todas as janelas do Roblox pelo titulo
+    # (MainWindowHandle pode ser zero em instancias multiplas)
+    $robloxPids = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Id
+    if (-not $robloxPids -or $robloxPids.Count -eq 0) { return }
+    $callback = [WinAPI+EnumWindowsProc]{
+        param($hwnd, $lp)
+        if ([WinAPI]::IsWindowVisible($hwnd)) {
+            $pid2 = 0
+            [WinAPI]::GetWindowThreadProcessId($hwnd, [ref]$pid2) | Out-Null
+            if ($robloxPids -contains $pid2) {
+                [WinAPI]::ShowWindow($hwnd, [WinAPI]::SW_MINIMIZE) | Out-Null
+            }
         }
+        return $true
     }
+    [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
 # ── Background runspace: minimiza Roblox a cada 2s ──────────────
-$minimizerScript = {
-    Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class WinAPIMin {
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int nCmdShow);
-    public const int SW_MINIMIZE = 6;
-}
-'@ -ErrorAction SilentlyContinue
-    while ($true) {
-        try {
-            $procs = Get-Process -Name 'RobloxPlayerBeta' -ErrorAction SilentlyContinue
-            foreach ($p in $procs) {
-                if ($p.MainWindowHandle -ne [IntPtr]::Zero) {
-                    [WinAPIMin]::ShowWindow($p.MainWindowHandle, [WinAPIMin]::SW_MINIMIZE) | Out-Null
-                }
-            }
-        } catch {}
-        Start-Sleep -Seconds 2
-    }
-}
-$rsMin = [RunspaceFactory]::CreateRunspace()
-$rsMin.Open()
-$psMin = [PowerShell]::Create()
-$psMin.Runspace = $rsMin
-[void]$psMin.AddScript($minimizerScript)
-$psMin.BeginInvoke() | Out-Null
+# MinimizarRoblox e chamado diretamente no loop principal a cada 2s (via $script:LastMin)
 
 # ── VoltPro ──────────────────────────────────────────────────────
 function GetVoltProc {
@@ -215,10 +199,14 @@ function AbrirFarmSync {
 
 function FecharFarmSync {
     wLog 'Fechando FarmSync...' 'WARN'
+    # Por path exato
     GetFarmSyncProc | Stop-Process -Force -EA SilentlyContinue
-    # fecha tambem qualquer cmd que tenha aberto pelo bat
-    Get-Process -Name 'cmd' -EA SilentlyContinue | Where-Object {
-        try { $_.MainWindowTitle -like '*FarmSync*' } catch { $false }
+    # Por nome do exe (client_web.exe)
+    Get-Process -Name 'client_web' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    # Qualquer processo cujo exe esteja na pasta farmsync
+    $farmDir = [System.IO.Path]::GetDirectoryName($FarmSyncExe)
+    Get-Process -EA SilentlyContinue | Where-Object {
+        try { $_.Path -and $_.Path.StartsWith($farmDir, [System.StringComparison]::OrdinalIgnoreCase) } catch { $false }
     } | Stop-Process -Force -EA SilentlyContinue
 }
 
@@ -743,6 +731,7 @@ while ($true) {
     if (($now - $script:LastNotice)  -ge 5)  { CheckNotice;     $script:LastNotice  = $now }
     if (($now - $script:LastUpdate)  -ge 60) { CheckUpdate;     $script:LastUpdate  = $now }
     if (($now - $script:LastOrg)     -ge 60) { OrganizarJanela; $script:LastOrg     = $now }
+    if (($now - $script:LastMin)      -ge 2)  { MinimizarRoblox;   $script:LastMin      = $now }
     CheckAndKillErrors
 
     if (-not $script:Paused) {
