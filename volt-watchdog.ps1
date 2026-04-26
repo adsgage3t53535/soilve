@@ -91,21 +91,35 @@ function Separador { Write-Host ('  ' + ('-' * 60)) -ForegroundColor DarkGray }
 function OrganizarJanela {
     $sw = [WinAPI]::GetSystemMetrics(0)
     $sh = [WinAPI]::GetSystemMetrics(1)
+
+    # FarmSync — maior, canto superior esquerdo
+    $FarmW = 1100; $FarmH = 700
+    $fsProc = GetFarmSyncProc
+    if ($fsProc -and $fsProc.MainWindowHandle -ne [IntPtr]::Zero) {
+        [WinAPI]::SetWindowPos($fsProc.MainWindowHandle, [IntPtr]::Zero, 10, 10, $FarmW, $FarmH, 0x0040) | Out-Null
+    }
+
+    # VoltPro — canto inferior direito
     $vProc = GetVoltProc
     if ($vProc -and $vProc.MainWindowHandle -ne [IntPtr]::Zero) {
         $xV = $sw - $WinW - 10; $yV = $sh - $WinH - 50
         [WinAPI]::SetWindowPos($vProc.MainWindowHandle, [IntPtr]::Zero, $xV, $yV, $WinW, $WinH, 0x0040) | Out-Null
     }
+
+    # WebRB — acima do Volt
     $wProc = Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1
     if ($wProc -and $wProc.MainWindowHandle -ne [IntPtr]::Zero) {
         $xR = $sw - $WinW - 10; $yR = $sh - $WinH - 50 - $WinH - 10
         [WinAPI]::SetWindowPos($wProc.MainWindowHandle, [IntPtr]::Zero, $xR, $yR, $WinW, $WinH, 0x0040) | Out-Null
     }
+
+    # CMD (este script) — esquerda do Volt
     $hwndCmd = [WinAPI]::GetConsoleWindow()
     if ($hwndCmd -ne [IntPtr]::Zero) {
         $xC = $sw - $WinW - 10 - $CmdW - 10; $yC = $sh - $CmdH - 50
         [WinAPI]::SetWindowPos($hwndCmd, [IntPtr]::Zero, $xC, $yC, $CmdW, $CmdH, 0x0040) | Out-Null
     }
+
     MinimizarRoblox
 }
 
