@@ -1,6 +1,19 @@
 # ================================================================
 #  MONITOR - VoltPro Watchdog + Roblox Error Killer + FarmSync
 # ================================================================
+
+# ── Auto-elevacao para Administrador ────────────────────────────
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if (-not $scriptPath) {
+        # Executado via iex/irm — salva em disco e relanca como admin
+        $scriptPath = "$env:TEMP\monitor_run.ps1"
+        $MyInvocation.MyCommand.ScriptBlock | Out-String | Set-Content $scriptPath -Encoding UTF8
+    }
+    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
+    exit
+}
+
 $host.UI.RawUI.WindowTitle = 'Monitor'
 
 Add-Type @'
