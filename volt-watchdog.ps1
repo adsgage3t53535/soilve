@@ -2,18 +2,6 @@
 #  MONITOR - VoltPro Watchdog + Roblox Error Killer + FarmSync
 # ================================================================
 
-# ── Auto-elevacao para Administrador ────────────────────────────
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    $scriptPath = $MyInvocation.MyCommand.Path
-    if (-not $scriptPath) {
-        # Executado via iex/irm — salva em disco e relanca como admin
-        $scriptPath = "$env:TEMP\monitor_run.ps1"
-        $MyInvocation.MyCommand.ScriptBlock | Out-String | Set-Content $scriptPath -Encoding UTF8
-    }
-    Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
-    exit
-}
-
 $host.UI.RawUI.WindowTitle = 'Monitor'
 
 Add-Type @'
@@ -92,13 +80,6 @@ function OrganizarJanela {
     $sw = [WinAPI]::GetSystemMetrics(0)
     $sh = [WinAPI]::GetSystemMetrics(1)
 
-    # FarmSync — maior, canto superior esquerdo
-    $FarmW = 1100; $FarmH = 700
-    $fsProc = GetFarmSyncProc
-    if ($fsProc -and $fsProc.MainWindowHandle -ne [IntPtr]::Zero) {
-        [WinAPI]::SetWindowPos($fsProc.MainWindowHandle, [IntPtr]::Zero, 10, 10, $FarmW, $FarmH, 0x0040) | Out-Null
-    }
-
     # VoltPro — canto inferior direito
     $vProc = GetVoltProc
     if ($vProc -and $vProc.MainWindowHandle -ne [IntPtr]::Zero) {
@@ -106,11 +87,13 @@ function OrganizarJanela {
         [WinAPI]::SetWindowPos($vProc.MainWindowHandle, [IntPtr]::Zero, $xV, $yV, $WinW, $WinH, 0x0040) | Out-Null
     }
 
-    # WebRB — acima do Volt
+    # WebRB ou FarmSync — acima do Volt (so um deles vai estar aberto)
     $wProc = Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1
-    if ($wProc -and $wProc.MainWindowHandle -ne [IntPtr]::Zero) {
+    $fsProc = GetFarmSyncProc
+    $upperProc = if ($wProc) { $wProc } elseif ($fsProc) { $fsProc } else { $null }
+    if ($upperProc -and $upperProc.MainWindowHandle -ne [IntPtr]::Zero) {
         $xR = $sw - $WinW - 10; $yR = $sh - $WinH - 50 - $WinH - 10
-        [WinAPI]::SetWindowPos($wProc.MainWindowHandle, [IntPtr]::Zero, $xR, $yR, $WinW, $WinH, 0x0040) | Out-Null
+        [WinAPI]::SetWindowPos($upperProc.MainWindowHandle, [IntPtr]::Zero, $xR, $yR, $WinW, $WinH, 0x0040) | Out-Null
     }
 
     # CMD (este script) — esquerda do Volt
