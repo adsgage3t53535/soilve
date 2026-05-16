@@ -23,7 +23,8 @@ public class WinAPI {
 '@ -ErrorAction SilentlyContinue
 
 # ── Configuracoes ────────────────────────────────────────────────
-$VoltExe      = "$env:USERPROFILE\Desktop\VoltBlack\VoltPro_6.6.exe"
+$VoltDir      = "$env:USERPROFILE\Desktop\Volt"
+$VoltExe      = "$VoltDir\tauri-app.exe"
 $VoltProc     = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
 
 $FarmSyncExe  = "$env:USERPROFILE\Desktop\farmsync\client_web.exe"
@@ -51,6 +52,17 @@ $MachineId = try {
 
 $script:Paused    = $false
 $script:CurHash   = $null
+
+# Timers
+$script:LastReport    = 0
+$script:LastNotice    = 0
+$script:LastUpdate    = 0
+$script:LastOrg       = 0
+$script:LastMin       = 0
+$script:LastVoltCheck = 0
+$script:ForceReportIn = 0
+$script:LastReportSig = ''
+$script:NoticeCount   = 0
 
 # ── Log ─────────────────────────────────────────────────────────
 $script:LogBuffer = [System.Collections.Generic.List[hashtable]]::new()
@@ -112,8 +124,6 @@ function OrganizarJanela {
 function MinimizarRoblox {
     $robloxPids = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Id
     if (-not $robloxPids -or $robloxPids.Count -eq 0) { return }
-    $WM_SYSCOMMAND = [IntPtr]0x0112
-    $SC_MINIMIZE   = [IntPtr]0xF020
     $callback = [WinAPI+EnumWindowsProc]{
         param($hwnd, $lp)
         if ([WinAPI]::IsWindowVisible($hwnd)) {
@@ -128,9 +138,6 @@ function MinimizarRoblox {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
-# ── Background runspace: minimiza Roblox a cada 2s ──────────────
-# MinimizarRoblox e chamado diretamente no loop principal a cada 2s (via $script:LastMin)
-
 # ── VoltPro ──────────────────────────────────────────────────────
 function GetVoltProc {
     Get-Process -EA SilentlyContinue | Where-Object {
@@ -139,8 +146,12 @@ function GetVoltProc {
 }
 
 function AbrirVolt {
+    if (-not (Test-Path $VoltExe)) {
+        wLog "VoltPro exe nao encontrado: $VoltExe" 'ERROR'
+        return
+    }
     wLog 'Abrindo VoltPro...' 'OK'
-    Start-Process $VoltExe
+    Start-Process $VoltExe -WorkingDirectory $VoltDir
     Start-Sleep 8
     OrganizarJanela
 }
@@ -148,14 +159,17 @@ function AbrirVolt {
 function FecharVolt {
     wLog 'Fechando VoltPro...' 'WARN'
     GetVoltProc | Stop-Process -Force -EA SilentlyContinue
+    # tauri-app pode gerar processos filhos — matar pelo nome tambem
+    Get-Process -Name 'tauri-app' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 }
 
 function ReiniciarVolt {
     Separador
     wLog 'Reiniciando VoltPro...' 'WARN'
     GetVoltProc | Stop-Process -Force -EA SilentlyContinue
+    Get-Process -Name 'tauri-app' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
     Start-Sleep 3
-    Start-Process $VoltExe
+    Start-Process $VoltExe -WorkingDirectory $VoltDir
     Start-Sleep 8
     OrganizarJanela
     Separador
@@ -182,11 +196,9 @@ function GetFarmSyncProc {
     } | Select-Object -First 1
 }
 
-# Detecta se o FarmSync esta aberto pelo exe
 function FarmSyncAberto {
     $p = GetFarmSyncProc
     if ($p) { return $true }
-    # Fallback: pelo nome do exe
     $exeName = [System.IO.Path]::GetFileNameWithoutExtension($FarmSyncExe)
     $p2 = Get-Process -Name $exeName -EA SilentlyContinue | Select-Object -First 1
     return ($null -ne $p2)
@@ -205,11 +217,8 @@ function AbrirFarmSync {
 
 function FecharFarmSync {
     wLog 'Fechando FarmSync...' 'WARN'
-    # Por path exato
     GetFarmSyncProc | Stop-Process -Force -EA SilentlyContinue
-    # Por nome do exe (client_web.exe)
     Get-Process -Name 'client_web' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
-    # Qualquer processo cujo exe esteja na pasta farmsync
     $farmDir = [System.IO.Path]::GetDirectoryName($FarmSyncExe)
     Get-Process -EA SilentlyContinue | Where-Object {
         try { $_.Path -and $_.Path.StartsWith($farmDir, [System.StringComparison]::OrdinalIgnoreCase) } catch { $false }
@@ -269,14 +278,14 @@ function ReiniciarTudo {
     FecharVolt
     FecharWebRB
     FecharFarmSync
-    $wsDir = $env:USERPROFILE + '\Desktop\VoltBlack\workspace'
+    $wsDir = "$VoltDir\workspace"
     if (Test-Path $wsDir) {
         Get-ChildItem $wsDir -Recurse | Remove-Item -Force -Recurse -EA SilentlyContinue
         wLog 'Workspace limpo.' 'OK'
     }
     Start-Sleep 3
     wLog 'Abrindo VoltPro...' 'OK'
-    Start-Process $VoltExe
+    Start-Process $VoltExe -WorkingDirectory $VoltDir
     Start-Sleep 10
     wLog 'Abrindo WebRB...' 'OK'
     AbrirWebRB
@@ -287,7 +296,7 @@ function ReiniciarTudo {
 
 # ── Autoexec ─────────────────────────────────────────────────────
 function SetAutoexec($url) {
-    $dir = $env:USERPROFILE + '\Desktop\VoltBlack\autoexec'
+    $dir = "$VoltDir\autoexec"
     try {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
         Get-ChildItem $dir | Where-Object { $_.Name -ne 'checkyummy.lua' } | Remove-Item -Force -EA SilentlyContinue
@@ -377,12 +386,9 @@ function CheckUpdate {
         } elseif ($hash -ne $script:CurHash) {
             wLog 'Nova versao detectada. Atualizando...' 'WARN'
             $script:CurHash = $hash
-            # Salva o script novo em disco e executa em nova janela,
-            # passando o PID atual para que o novo processo feche esta janela.
             $tmpPath = "$env:TEMP\monitor_update.ps1"
             [System.IO.File]::WriteAllText($tmpPath, $raw, [System.Text.UTF8Encoding]::new($false))
             $selfPid = $PID
-            # Wrapper: mata o processo antigo apos 3s e executa o novo script
             $launcher = "Start-Sleep 3; Stop-Process -Id $selfPid -Force -EA SilentlyContinue; & '$tmpPath'"
             Start-Process 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$launcher`"" -WindowStyle Normal
             exit
@@ -432,7 +438,7 @@ function ReportMetrics {
         $webrb    = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
         $farmsync = if (FarmSyncAberto) { 1 } else { 0 }
         $voltUser = ''
-        $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
+        $cfgPath = "$VoltDir\volt_config.json"
         if (Test-Path $cfgPath) {
             try { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json; $voltUser = if ($cfg.username) { $cfg.username } else { '' } } catch { }
         }
@@ -441,21 +447,19 @@ function ReportMetrics {
         $ramUsed  = if ($m.ramUsed)  { $m.ramUsed }  else { 0 }
         $ramTotal = if ($m.ramTotal) { $m.ramTotal }  else { 0 }
 
-        # Signature para detectar mudancas — CPU arredondado em 2% p/ evitar ruido
         $cpuR  = [Math]::Round($cpu / 2) * 2
         $sig   = "$roblox|$volt|$webrb|$farmsync|$voltUser|$cpuR|$([Math]::Round($ramUsed,1))"
 
         $script:ForceReportIn--
         $mustSend = ($sig -ne $script:LastReportSig) -or ($script:ForceReportIn -le 0)
-        if (-not $mustSend) { return }  # nada mudou, pula o POST
+        if (-not $mustSend) { return }
 
         $script:LastReportSig = $sig
-        $script:ForceReportIn = 60   # forca envio a cada ~5 min (60 * 5s)
+        $script:ForceReportIn = 60
 
         $body = @{ roblox = $roblox; volt = $volt; webrb = $webrb; farmsync = $farmsync; voltUser = $voltUser; cpu = $cpu; ramUsed = $ramUsed; ramTotal = $ramTotal } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$ApiUrl/report/$MachineId" -Method POST -Headers $ApiHeaders -Body $body -ContentType 'application/json' -TimeoutSec 5 -EA Stop | Out-Null
     } catch { }
-    # flush log buffer sempre (independente de delta)
     try {
         if ($script:LogBuffer.Count -gt 0) {
             $toSend = $script:LogBuffer.ToArray()
@@ -466,17 +470,11 @@ function ReportMetrics {
     } catch { }
 }
 
-
-# SendAck agora via ackQueue (definida no bloco do runspace de poll abaixo)
-
 # ── Poll em runspace separado — nao bloqueia o loop principal ────
-# Fila thread-safe: runspace deposita comandos, loop principal consome
 $cmdQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
-# Fila de ACKs: loop principal deposita, runspace envia ao servidor
 $ackQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
 $pollStop = [ref]$false
 
-# Runspace 1: long-poll — so recebe comandos, nao envia ACKs
 $pollScript = {
     param($apiUrl, $machineId, $apiKey, $cmdQueue, $pollStop)
     $headers   = @{ 'X-Api-Key' = $apiKey }
@@ -497,7 +495,6 @@ $pollScript = {
     }
 }
 
-# Runspace 2: ACK sender — loop rapido dedicado, envia assim que chega
 $ackScript = {
     param($apiUrl, $machineId, $apiKey, $ackQueue, $pollStop)
     $headers = @{ 'X-Api-Key' = $apiKey }
@@ -511,7 +508,6 @@ $ackScript = {
             } catch {}
             $sent = $true
         }
-        # So dorme se nao tinha nada — evita CPU desnecessaria
         if (-not $sent) { Start-Sleep -Milliseconds 200 }
     }
 }
@@ -598,7 +594,7 @@ function DrainCommands {
                 else { wLog 'set_autoexec: URL vazia' 'WARN'; SendAck $cmd $false 'URL vazia' }
             }
             'set_cookies' {
-                $ckPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
+                $ckPath = "$WebRBDir\cookie.txt"
                 if ($data) {
                     try {
                         $unicos = ($data | Where-Object { $_ -ne $null -and $_.Trim() -ne '' }) | Select-Object -Unique
@@ -608,7 +604,7 @@ function DrainCommands {
                 } else { wLog 'set_cookies: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
             }
             'clear_switched' {
-                $swDir = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\switched"
+                $swDir = "$WebRBDir\switched"
                 try {
                     if (Test-Path $swDir) {
                         $files = Get-ChildItem $swDir -Filter '*.txt' -EA SilentlyContinue
@@ -619,7 +615,7 @@ function DrainCommands {
                 } catch { wLog "Erro ao limpar switched: $_" 'ERROR'; SendAck $cmd $false "$_" }
             }
             'apply_volt_config' {
-                $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
+                $cfgPath = "$VoltDir\volt_config.json"
                 if ($data) {
                     try {
                         $keep = @{ password = $null; username = $null }
@@ -633,7 +629,7 @@ function DrainCommands {
                 } else { wLog 'apply_volt_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
             }
             'apply_webrb_config' {
-                $cfgPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\config.json"
+                $cfgPath = "$WebRBDir\config.json"
                 if ($data) {
                     try {
                         $dir = Split-Path $cfgPath
@@ -645,7 +641,7 @@ function DrainCommands {
                 } else { wLog 'apply_webrb_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
             }
             'clear_cookies' {
-                $ckPath = "$env:USERPROFILE\Desktop\WebRB\YummyWebPlayer\cookie.txt"
+                $ckPath = "$WebRBDir\cookie.txt"
                 try { [System.IO.File]::WriteAllText($ckPath, ''); wLog 'cookie.txt limpo' 'OK'; SendAck $cmd $true }
                 catch { wLog "Erro ao limpar cookies: $_" 'ERROR'; SendAck $cmd $false "$_" }
             }
@@ -659,7 +655,7 @@ function DrainCommands {
             'pause'  { $script:Paused = $true;  $host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'; wLog 'Monitor PAUSADO.' 'WARN'; SendAck $cmd $true }
             'resume' { $script:Paused = $false; $host.UI.RawUI.WindowTitle = 'Monitor';            wLog 'Monitor RETOMADO.' 'OK';  SendAck $cmd $true }
             'set_volt_login' {
-                $cfgPath = "$env:USERPROFILE\Desktop\VoltBlack\volt_config.json"
+                $cfgPath = "$VoltDir\volt_config.json"
                 if ($data -and $data.username -and $data.password) {
                     try {
                         if (-not (Test-Path $cfgPath)) { wLog 'volt_config.json nao encontrado' 'ERROR'; SendAck $cmd $false 'arquivo nao encontrado'; continue }
@@ -721,7 +717,7 @@ $host.UI.RawUI.WindowTitle = 'Monitor'
 OrganizarJanela
 
 # ── Loop ─────────────────────────────────────────────────────────
-$tick = 0  # mantido por compatibilidade
+$tick = 0
 while ($true) {
     if (Test-Path $StopFile) {
         Write-Host ''; Separador
@@ -731,13 +727,12 @@ while ($true) {
 
     DrainCommands
 
-    # Timers baseados em tempo real (tick nao representa mais segundos com long-poll)
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     if (($now - $script:LastReport)  -ge 5)  { ReportMetrics;   $script:LastReport  = $now }
     if (($now - $script:LastNotice)  -ge 5)  { CheckNotice;     $script:LastNotice  = $now }
     if (($now - $script:LastUpdate)  -ge 60) { CheckUpdate;     $script:LastUpdate  = $now }
     if (($now - $script:LastOrg)     -ge 60) { OrganizarJanela; $script:LastOrg     = $now }
-    if (($now - $script:LastMin)      -ge 2)  { MinimizarRoblox;   $script:LastMin      = $now }
+    if (($now - $script:LastMin)      -ge 2)  { MinimizarRoblox; $script:LastMin     = $now }
     CheckAndKillErrors
 
     if (-not $script:Paused) {
@@ -746,9 +741,13 @@ while ($true) {
             $voltProc = GetVoltProc
             if (-not $voltProc) {
                 wLog 'VoltPro nao encontrado. Iniciando...' 'WARN'
-                Start-Process $VoltExe
-                Start-Sleep 10
-                OrganizarJanela
+                if (Test-Path $VoltExe) {
+                    Start-Process $VoltExe -WorkingDirectory $VoltDir
+                    Start-Sleep 10
+                    OrganizarJanela
+                } else {
+                    wLog "Exe nao encontrado: $VoltExe" 'ERROR'
+                }
             }
         }
     }
