@@ -23,9 +23,10 @@ public class WinAPI {
 '@ -ErrorAction SilentlyContinue
 
 # ── Configuracoes ────────────────────────────────────────────────
-$VoltDir      = "$env:USERPROFILE\Desktop\Volt"
-$VoltExe      = "$VoltDir\tauri-app.exe"
+$VoltDir      = "$env:USERPROFILE\Desktop\voltx"
+$VoltExe      = "$VoltDir\volt-headless.exe"
 $VoltProc     = [System.IO.Path]::GetFileNameWithoutExtension($VoltExe)
+$VoltXConfig  = "$VoltDir\config.json"
 
 $FarmSyncExe  = "$env:USERPROFILE\Desktop\farmsync\client_web.exe"
 $FarmSyncBat  = "$env:USERPROFILE\Desktop\farmsync\FarmSync_AutoStart.bat"
@@ -119,8 +120,6 @@ function OrganizarJanela {
 }
 
 # ── Roblox Minimizer ─────────────────────────────────────────────
-# PostMessage WM_SYSCOMMAND/SC_MINIMIZE nao e bloqueado pelo UIPI
-# (funciona sem admin, ao contrario de ShowWindow em processos elevados)
 function MinimizarRoblox {
     $robloxPids = @(Get-Process -Name 'RobloxPlayerBeta','RobloxPlayer' -EA SilentlyContinue).Id
     if (-not $robloxPids -or $robloxPids.Count -eq 0) { return }
@@ -138,7 +137,7 @@ function MinimizarRoblox {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
-# ── VoltPro ──────────────────────────────────────────────────────
+# ── VoltX ────────────────────────────────────────────────────────
 function GetVoltProc {
     Get-Process -EA SilentlyContinue | Where-Object {
         try { $_.Path -eq $VoltExe } catch { $false }
@@ -147,32 +146,52 @@ function GetVoltProc {
 
 function AbrirVolt {
     if (-not (Test-Path $VoltExe)) {
-        wLog "VoltPro exe nao encontrado: $VoltExe" 'ERROR'
+        wLog "VoltX exe nao encontrado: $VoltExe" 'ERROR'
         return
     }
-    wLog 'Abrindo VoltPro...' 'OK'
+    wLog 'Abrindo VoltX...' 'OK'
     Start-Process $VoltExe -WorkingDirectory $VoltDir
     Start-Sleep 8
     OrganizarJanela
 }
 
 function FecharVolt {
-    wLog 'Fechando VoltPro...' 'WARN'
+    wLog 'Fechando VoltX...' 'WARN'
     GetVoltProc | Stop-Process -Force -EA SilentlyContinue
-    # tauri-app pode gerar processos filhos — matar pelo nome tambem
-    Get-Process -Name 'tauri-app' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    Get-Process -Name 'volt-headless' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 }
 
 function ReiniciarVolt {
     Separador
-    wLog 'Reiniciando VoltPro...' 'WARN'
+    wLog 'Reiniciando VoltX...' 'WARN'
     GetVoltProc | Stop-Process -Force -EA SilentlyContinue
-    Get-Process -Name 'tauri-app' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+    Get-Process -Name 'volt-headless' -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
     Start-Sleep 3
     Start-Process $VoltExe -WorkingDirectory $VoltDir
     Start-Sleep 8
     OrganizarJanela
     Separador
+}
+
+# ── VoltX Key ────────────────────────────────────────────────────
+function SetVoltXKey($key) {
+    try {
+        $key = $key.Trim()
+        $dir = [System.IO.Path]::GetDirectoryName($VoltXConfig)
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $cfg = if (Test-Path $VoltXConfig) {
+            Get-Content $VoltXConfig -Raw | ConvertFrom-Json
+        } else {
+            [PSCustomObject]@{ voltXkey = ''; voltUser = ''; voltPass = '' }
+        }
+        $cfg | Add-Member -MemberType NoteProperty -Name 'voltXkey' -Value $key -Force
+        $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $VoltXConfig -Encoding UTF8
+        wLog "VoltX key configurada: $($key.Substring(0, [Math]::Min(12,$key.Length)))..." 'OK'
+        return $true
+    } catch {
+        wLog "Erro ao gravar VoltX key: $_" 'ERROR'
+        return $false
+    }
 }
 
 # ── WebRB / Yummy ────────────────────────────────────────────────
@@ -284,7 +303,7 @@ function ReiniciarTudo {
         wLog 'Workspace limpo.' 'OK'
     }
     Start-Sleep 3
-    wLog 'Abrindo VoltPro...' 'OK'
+    wLog 'Abrindo VoltX...' 'OK'
     Start-Process $VoltExe -WorkingDirectory $VoltDir
     Start-Sleep 10
     wLog 'Abrindo WebRB...' 'OK'
@@ -337,7 +356,7 @@ function CheckAndKillErrors {
     [WinAPI]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
 }
 
-# ── Detector de NOTICE (VoltPro) ─────────────────────────────────
+# ── Detector de NOTICE (VoltX) ───────────────────────────────────
 function CheckNotice {
     $voltProc = GetVoltProc
     if (-not $voltProc) { $script:NoticeCount = 0; return }
@@ -366,9 +385,9 @@ function CheckNotice {
         $script:NoticeCount++
         wLog "NOTICE detectado ($($script:NoticeCount)x)" 'WARN'
         if ($script:NoticeCount -ge 2) {
-            wLog 'NOTICE 2x consecutivo — Reiniciando VoltPro...' 'ERROR'
+            wLog 'NOTICE 2x consecutivo — Reiniciando VoltX...' 'ERROR'
             $script:NoticeCount = 0
-            try { ReiniciarVolt } catch { wLog "Erro ao reiniciar Volt apos NOTICE: $_" 'ERROR' }
+            try { ReiniciarVolt } catch { wLog "Erro ao reiniciar VoltX apos NOTICE: $_" 'ERROR' }
         }
     } else {
         $script:NoticeCount = 0
@@ -438,9 +457,8 @@ function ReportMetrics {
         $webrb    = if (Get-Process -Name 'webrb','WebRB' -EA SilentlyContinue | Select-Object -First 1) { 1 } else { 0 }
         $farmsync = if (FarmSyncAberto) { 1 } else { 0 }
         $voltUser = ''
-        $cfgPath = "$VoltDir\volt_config.json"
-        if (Test-Path $cfgPath) {
-            try { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json; $voltUser = if ($cfg.username) { $cfg.username } else { '' } } catch { }
+        if (Test-Path $VoltXConfig) {
+            try { $cfg = Get-Content $VoltXConfig -Raw | ConvertFrom-Json; $voltUser = if ($cfg.voltUser) { $cfg.voltUser } else { '' } } catch { }
         }
         $m        = $shared.Value
         $cpu      = if ($m.cpu)      { $m.cpu }      else { 0 }
@@ -573,6 +591,12 @@ function DrainCommands {
                     catch { SendAck $cmd $false "$_" }
                 } else { wLog 'set_farmsync_key: key vazia' 'WARN'; SendAck $cmd $false 'key vazia' }
             }
+            'set_voltx_key' {
+                if ($data) {
+                    try { $ok = SetVoltXKey $data; if ($ok) { SendAck $cmd $true } else { SendAck $cmd $false 'falha ao gravar' } }
+                    catch { SendAck $cmd $false "$_" }
+                } else { wLog 'set_voltx_key: key vazia' 'WARN'; SendAck $cmd $false 'key vazia' }
+            }
             'restart_cmd' {
                 SendAck $cmd $true; wLog 'Reiniciando CMD...' 'WARN'
                 try {
@@ -615,17 +639,22 @@ function DrainCommands {
                 } catch { wLog "Erro ao limpar switched: $_" 'ERROR'; SendAck $cmd $false "$_" }
             }
             'apply_volt_config' {
-                $cfgPath = "$VoltDir\volt_config.json"
                 if ($data) {
                     try {
-                        $keep = @{ password = $null; username = $null }
-                        if (Test-Path $cfgPath) { $cur = Get-Content $cfgPath -Raw | ConvertFrom-Json; $keep.password = $cur.password; $keep.username = $cur.username }
+                        $keep = @{ voltPass = $null; voltUser = $null; voltXkey = $null }
+                        if (Test-Path $VoltXConfig) {
+                            $cur = Get-Content $VoltXConfig -Raw | ConvertFrom-Json
+                            $keep.voltPass = $cur.voltPass
+                            $keep.voltUser = $cur.voltUser
+                            $keep.voltXkey = $cur.voltXkey
+                        }
                         $obj = $data | ConvertTo-Json -Depth 10 | ConvertFrom-Json
-                        if ($keep.password) { $obj | Add-Member -MemberType NoteProperty -Name 'password' -Value $keep.password -Force }
-                        if ($keep.username)  { $obj | Add-Member -MemberType NoteProperty -Name 'username'  -Value $keep.username  -Force }
-                        $obj | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
-                        wLog 'volt_config.json atualizado' 'OK'; SendAck $cmd $true
-                    } catch { wLog "Erro ao gravar volt_config: $_" 'ERROR'; SendAck $cmd $false "$_" }
+                        if ($keep.voltPass)  { $obj | Add-Member -MemberType NoteProperty -Name 'voltPass'  -Value $keep.voltPass  -Force }
+                        if ($keep.voltUser)  { $obj | Add-Member -MemberType NoteProperty -Name 'voltUser'  -Value $keep.voltUser  -Force }
+                        if ($keep.voltXkey)  { $obj | Add-Member -MemberType NoteProperty -Name 'voltXkey'  -Value $keep.voltXkey  -Force }
+                        $obj | ConvertTo-Json -Depth 10 | Set-Content -Path $VoltXConfig -Encoding UTF8
+                        wLog 'config.json (VoltX) atualizado' 'OK'; SendAck $cmd $true
+                    } catch { wLog "Erro ao gravar config VoltX: $_" 'ERROR'; SendAck $cmd $false "$_" }
                 } else { wLog 'apply_volt_config: dados vazios' 'WARN'; SendAck $cmd $false 'dados vazios' }
             }
             'apply_webrb_config' {
@@ -655,16 +684,15 @@ function DrainCommands {
             'pause'  { $script:Paused = $true;  $host.UI.RawUI.WindowTitle = 'Monitor [PAUSADO]'; wLog 'Monitor PAUSADO.' 'WARN'; SendAck $cmd $true }
             'resume' { $script:Paused = $false; $host.UI.RawUI.WindowTitle = 'Monitor';            wLog 'Monitor RETOMADO.' 'OK';  SendAck $cmd $true }
             'set_volt_login' {
-                $cfgPath = "$VoltDir\volt_config.json"
                 if ($data -and $data.username -and $data.password) {
                     try {
-                        if (-not (Test-Path $cfgPath)) { wLog 'volt_config.json nao encontrado' 'ERROR'; SendAck $cmd $false 'arquivo nao encontrado'; continue }
-                        $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-                        $cfg | Add-Member -MemberType NoteProperty -Name 'username' -Value $data.username -Force
-                        $cfg | Add-Member -MemberType NoteProperty -Name 'password' -Value $data.password -Force
-                        $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $cfgPath -Encoding UTF8
-                        $v = Get-Content $cfgPath -Raw | ConvertFrom-Json
-                        if ($v.username -eq $data.username -and $v.password -eq $data.password) { wLog "Login Volt: $($data.username)" 'OK'; SendAck $cmd $true }
+                        if (-not (Test-Path $VoltXConfig)) { wLog 'config.json nao encontrado' 'ERROR'; SendAck $cmd $false 'arquivo nao encontrado'; continue }
+                        $cfg = Get-Content $VoltXConfig -Raw | ConvertFrom-Json
+                        $cfg | Add-Member -MemberType NoteProperty -Name 'voltUser' -Value $data.username -Force
+                        $cfg | Add-Member -MemberType NoteProperty -Name 'voltPass' -Value $data.password -Force
+                        $cfg | ConvertTo-Json -Depth 10 | Set-Content -Path $VoltXConfig -Encoding UTF8
+                        $v = Get-Content $VoltXConfig -Raw | ConvertFrom-Json
+                        if ($v.voltUser -eq $data.username -and $v.voltPass -eq $data.password) { wLog "Login VoltX: $($data.username)" 'OK'; SendAck $cmd $true }
                         else { wLog 'Falha na verificacao do login' 'ERROR'; SendAck $cmd $false 'verificacao falhou' }
                     } catch { wLog "Erro ao salvar login: $_" 'ERROR'; SendAck $cmd $false "$_" }
                 } else { wLog 'set_volt_login: dados invalidos' 'WARN'; SendAck $cmd $false 'dados invalidos' }
@@ -704,10 +732,11 @@ function DrainCommands {
 Clear-Host
 Write-Host ''
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
-Write-Host '  |   MONITOR  -  VoltPro + FarmSync Watchdog + Roblox      |' -ForegroundColor DarkCyan
+Write-Host '  |   MONITOR  -  VoltX + FarmSync Watchdog + Roblox        |' -ForegroundColor DarkCyan
 Write-Host '  +----------------------------------------------------------+' -ForegroundColor DarkCyan
 Write-Host ''
-Write-Host '  Volt     : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe      -ForegroundColor Cyan
+Write-Host '  VoltX    : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltExe      -ForegroundColor Cyan
+Write-Host '  Config   : ' -NoNewline -ForegroundColor DarkGray; Write-Host $VoltXConfig  -ForegroundColor Cyan
 Write-Host '  FarmSync : ' -NoNewline -ForegroundColor DarkGray; Write-Host $FarmSyncExe  -ForegroundColor Cyan
 Write-Host '  ID       : ' -NoNewline -ForegroundColor DarkGray; Write-Host $MachineId    -ForegroundColor Cyan
 Write-Host ''
@@ -740,7 +769,7 @@ while ($true) {
             $script:LastVoltCheck = $now
             $voltProc = GetVoltProc
             if (-not $voltProc) {
-                wLog 'VoltPro nao encontrado. Iniciando...' 'WARN'
+                wLog 'VoltX nao encontrado. Iniciando...' 'WARN'
                 if (Test-Path $VoltExe) {
                     Start-Process $VoltExe -WorkingDirectory $VoltDir
                     Start-Sleep 10
