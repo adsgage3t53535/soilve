@@ -36,7 +36,7 @@ $LogFile      = $env:TEMP + '\monitor.log'
 $StopFile     = $env:TEMP + '\monitor.stop'
 $WinW         = 900; $WinH = 500
 $CmdW         = 700; $CmdH = 500
-$ApiUrl       = 'https://vps-production-2bd3.up.railway.app'
+$ApiUrl       = 'https://orca-app-esfi4.ondigitalocean.app'
 $ApiKey       = 'GobrinNoti'
 $ApiHeaders   = @{ 'X-Api-Key' = $ApiKey }
 $GithubUrl    = 'https://raw.githubusercontent.com/adsgage3t53535/soilve/refs/heads/main/volt-watchdog.ps1'
